@@ -1,7 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 REM ============================================================
-REM Install Jarvis.bat -- run this ONCE after unzipping.
+REM Install Jarvis (Windows).bat -- run this ONCE after unzipping, if
+REM you weren't given Jarvis-Setup.exe (that is the easier way).
 REM
 REM It finds Python (and offers to install it if it's missing), then
 REM installs Jarvis for you: a Jarvis icon on your Desktop and in the
@@ -13,6 +14,8 @@ REM
 REM   Install Jarvis.bat /inplace   (used by Setup.exe: no questions)
 REM ============================================================
 cd /d "%~dp0"
+REM 4.4.0: in a download the program lives in app\
+if not exist installer.py cd app
 set "UNATTENDED="
 set "MODE="
 if /i "%~1"=="/inplace" (

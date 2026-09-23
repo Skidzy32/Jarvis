@@ -91,6 +91,16 @@ def find_browser(pref, exists=os.path.exists, expand=os.path.expandvars):
     return None
 
 
+def available_browsers(exists=os.path.exists, expand=os.path.expandvars):
+    """[(key, name)] of the app-window browsers installed here, in order."""
+    out = []
+    for key, name, _port, win_paths, mac_path in BROWSERS:
+        paths = [expand(p) for p in win_paths] if IS_WINDOWS else [mac_path] if IS_MAC else []
+        if any(exists(p) for p in paths):
+            out.append((key, name))
+    return out
+
+
 def app_window_command(browser, url):
     key, _name, port, exe = browser
     profile = os.path.join(ROOT, "browser_launchers", "jarvis-profiles", key)
@@ -139,6 +149,15 @@ def open_window(url):
             return browser[1]
         except OSError as e:
             log(f"couldn't open {browser[1]}: {e}")
+    # 4.4.0: your normal browser. A file:// page can be handed to whatever
+    # opens .html FILES (not always your browser), so wait for Jarvis and
+    # open a normal web address instead, which always goes to your browser.
+    if url.startswith("file:"):
+        for _ in range(100):
+            if is_running(0.5):
+                break
+            time.sleep(0.25)
+        url = APP_URL + "boot.html"
     webbrowser.open(url)
     log("opened the default browser")
     return "default"

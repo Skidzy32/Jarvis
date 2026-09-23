@@ -75,6 +75,8 @@ def copy_program(src, dest, files=None):
     for rel in files:
         if any(rel == u or rel.startswith(u + os.sep) for u in USER_DATA):
             continue
+        if not os.path.isfile(os.path.join(src, rel)):
+            continue        # 4.4.0: README, the installers etc. sit outside app/ in a shared copy
         target = os.path.join(dest, rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy2(os.path.join(src, rel), target)
@@ -144,12 +146,12 @@ def windows_places():
     return desktop, start
 
 
-def windows_icons(dest):
+def windows_icons(dest, desktop_icon=True, start_menu=True):
     desktop, start = windows_places()
     args = f'"{os.path.join(dest, "jarvis_launcher.pyw")}"'
     icon = os.path.join(dest, "assets", "jarvis.ico")
     made = []
-    for folder in (desktop, start, dest):
+    for folder in [f for f, want in ((desktop, desktop_icon), (start, start_menu), (dest, True)) if want]:
         lnk = os.path.join(folder, "Jarvis.lnk")
         if os.path.isdir(folder) and _powershell_shortcut(lnk, pythonw(), args, dest, icon):
             made.append(lnk)
@@ -167,12 +169,25 @@ def windows_register(dest):
         winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
 
 
-def _ask(title, text, default_no=False):
-    """A yes/no question: a real Windows dialog when there's no console."""
+def _osa(script):
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+
+def _q(text):
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _ask(title, text, default_no=False, yes="Yes", no="No"):
+    """A yes/no question as a real dialog: Windows MessageBox, macOS dialog."""
     if IS_WINDOWS:
         import ctypes
         flags = 0x04 | 0x20 | (0x100 if default_no else 0)          # YESNO | QUESTION | (DEFBUTTON2)
         return ctypes.windll.user32.MessageBoxW(None, text, title, flags) == 6
+    if IS_MAC:
+        code, out = _osa(f"display dialog {_q(text)} with title {_q(title)} buttons {{{_q(no)}, {_q(yes)}}} "
+                         f"default button {_q(no if default_no else yes)} with icon note")
+        return code == 0 and out.endswith(yes)
     return input(f"{text} [y/n]: ").strip().lower().startswith("y")
 
 
@@ -180,8 +195,47 @@ def _tell(title, text):
     if IS_WINDOWS:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, text, title, 0x40)
+    elif IS_MAC:
+        _osa(f"display dialog {_q(text)} with title {_q(title)} buttons {{\"OK\"}} default button \"OK\" with icon note")
     else:
         print(text)
+
+
+def _launcher():
+    import importlib.machinery, importlib.util
+    loader = importlib.machinery.SourceFileLoader("jarvis_launcher", os.path.join(HERE, "jarvis_launcher.pyw"))
+    spec = importlib.util.spec_from_loader("jarvis_launcher", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def ask_browser():
+    """Which browser Jarvis should open in -- the person chooses (4.4.0)."""
+    found = _launcher().available_browsers()
+    options = [name for _key, name in found] + ["My normal browser"]
+    keys = [key for key, _name in found] + ["default"]
+    if IS_MAC:
+        lst = "{" + ", ".join(_q(o) for o in options) + "}"
+        code, out = _osa(f"choose from list {lst} with title \"Jarvis\" with prompt "
+                         f"\"Which browser should Jarvis open in?\" default items {{{_q(options[0])}}}")
+        return keys[options.index(out)] if code == 0 and out in options else keys[0]
+    if IS_WINDOWS and len(options) > 1:
+        for key, name in zip(keys[:-1], options[:-1]):   # one plain question per browser found
+            if _ask("Jarvis", f"Open Jarvis in {name}?\n\n(No = ask about the next one, then your normal browser.)"):
+                return key
+        return "default"
+    if len(options) > 1 and sys.stdin.isatty():
+        for i, o in enumerate(options, 1):
+            print(f"  {i}) {o}")
+        pick = input("Which browser should Jarvis open in? [1]: ").strip() or "1"
+        return keys[int(pick) - 1] if pick.isdigit() and 1 <= int(pick) <= len(keys) else keys[0]
+    return keys[0]
+
+
+def save_browser(dest, key):
+    import setup_flow
+    setup_flow.save(os.path.join(dest, "config.json"), {"app_browser": key})
 
 
 # ---- Mac: Jarvis.app ------------------------------------------------------
@@ -241,8 +295,22 @@ def stop_running():
         return False
 
 
-def install(src=HERE, dest=None, ask=True, start=True):
+def install(src=HERE, dest=None, ask=True, start=True, options=None):
+    """options: {"desktop": bool, "startmenu": bool, "applications": bool,
+    "browser": key}. Anything not given is ASKED (4.4.0), or defaulted when
+    ask=False."""
     dest = dest or install_dir()
+    o = dict(options or {})
+    if IS_WINDOWS:
+        if "startmenu" not in o:
+            o["startmenu"] = not ask or _ask("Install Jarvis", "Add Jarvis to the Start menu?")
+        if "desktop" not in o:
+            o["desktop"] = not ask or _ask("Install Jarvis", "Add a Jarvis shortcut to your Desktop?")
+    if IS_MAC and "applications" not in o:
+        o["applications"] = not ask or _ask("Install Jarvis", "Add Jarvis to your Applications folder, so you can open it "
+                                            "from Launchpad and Spotlight?", yes="Add", no="Don't add")
+    if "browser" not in o:
+        o["browser"] = ask_browser() if ask else "auto"
     updating = os.path.exists(os.path.join(dest, "server.py"))
     print(f"{'Updating' if updating else 'Installing'} Jarvis {VERSION} in {dest}")
     stop_running()
@@ -254,16 +322,18 @@ def install(src=HERE, dest=None, ask=True, start=True):
                                   + "). Bring them into the installed Jarvis? (They're copied, not moved.)")):
         bring_user_data(src, dest, extra)
         print("  Brought across: " + ", ".join(extra))
-    finish(dest)
+    save_browser(dest, o["browser"])
+    finish(dest, desktop_icon=o.get("desktop", True), start_menu=o.get("startmenu", True),
+           applications=o.get("applications", True))
     if start:
         launch(dest)
     return dest
 
 
-def finish(dest, register=True):
+def finish(dest, register=True, desktop_icon=True, start_menu=True, applications=True):
     if IS_WINDOWS:
-        made = windows_icons(dest)
-        print(f"  Icons: {len(made)} made (Desktop, Start menu)")
+        made = windows_icons(dest, desktop_icon, start_menu)
+        print(f"  Shortcuts made: {len(made)}")
         if not register:        # Setup.exe has its own entry in Settings > Apps
             return
         try:
@@ -271,7 +341,7 @@ def finish(dest, register=True):
             print("  Added to Settings > Apps (with Uninstall)")
         except OSError as e:
             print(f"  (Couldn't add to Settings > Apps: {e})")
-    elif IS_MAC:
+    elif IS_MAC and applications:
         print(f"  App: {mac_app(dest)}")
 
 
@@ -315,11 +385,26 @@ def uninstall(dest=None, ask=True):
     return True
 
 
+def _flag(name):
+    for a in sys.argv:
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
 if __name__ == "__main__":
     if "--uninstall" in sys.argv:
         uninstall()
     elif "--in-place" in sys.argv:
-        finish(HERE, register=False)
-        launch(HERE)
+        # Setup.exe: the files and shortcuts are its job; this only records
+        # the browser that was chosen in the wizard.
+        save_browser(HERE, _flag("--browser") or "auto")
     else:
-        install(ask="--yes" not in sys.argv)
+        opts = {}
+        if _flag("--browser"):
+            opts["browser"] = _flag("--browser")
+        if "--no-desktop" in sys.argv:
+            opts["desktop"] = False
+        if "--no-startmenu" in sys.argv:
+            opts["startmenu"] = False
+        install(ask="--yes" not in sys.argv, options=opts)

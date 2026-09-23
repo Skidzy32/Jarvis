@@ -13,29 +13,30 @@ It runs on **your own computer**. Your notes are ordinary text files in a folder
 
 ## Getting started (about 5 minutes)
 
-### 1. Download it
-On this GitHub page, press the green **Code** button → **Download ZIP**, and unzip it anywhere (your Downloads folder is fine; you won't need it after installing).
+### Windows
+1. **[Download Jarvis-Setup.exe](https://github.com/Skidzy32/Jarvis/releases/latest/download/Jarvis-Setup.exe)** (or open **Releases** on the right of this page).
+2. Run it. Windows may say *"Windows protected your PC"*, because Jarvis isn't code-signed: **More info → Run anyway**.
+3. Click through the setup: you choose whether you want a Start menu entry and a Desktop icon, and which browser Jarvis opens in. If your computer doesn't have Python, Setup quietly installs a private copy just for Jarvis. No admin rights needed.
 
-### 2. Install it (once)
+### Mac
+1. Press the green **Code** button → **Download ZIP**, and unzip it.
+2. Right-click **`Install Jarvis (Mac).command`** → **Open** → **Open** (macOS asks because it came from the internet). It asks before adding Jarvis to Applications and which browser to use, and offers to install Python if you don't have it.
 
-| | |
-|---|---|
-| **Windows** | Double-click **`Install Jarvis.bat`**. If you don't have Python, it offers to install it: type `Y` and press Enter. It then adds a **Jarvis icon** to your Desktop and Start menu, and Jarvis to *Settings → Apps* (with Uninstall). *(If you were given `Jarvis-Setup.exe` instead, just run that. Windows may say "Windows protected your PC" because it isn't code-signed: **More info → Run anyway**.)* |
-| **Mac** | Right-click **`Install Jarvis (Mac).command`** → **Open** → **Open** (macOS asks because it came from the internet). If you don't have Python, it offers to install it. It then puts **Jarvis** in your Applications (so it's in Launchpad and Spotlight). |
+*(Windows without Setup.exe: the ZIP also has **`Install Jarvis (Windows).bat`**, which does the same job in a console window.)*
 
-### 3. Open Jarvis from its icon
-Jarvis opens in its own window, with a boot screen while it starts up. The first time, it walks you through four quick things:
+### Then open Jarvis
+From the Start menu (type *Jarvis*), your Desktop icon, or on a Mac from Launchpad/Spotlight. It opens in its own window with a boot screen. The first time, it walks you through four quick things:
 1. **What it should call you:** "sir", "madam", your name, or nothing.
 2. **Your free AI key.** Sign up at [openrouter.ai](https://openrouter.ai), go to [Keys](https://openrouter.ai/settings/keys), press *Create Key*, paste it in, press **Test**. Free, no card needed.
 3. **Sample notes (optional):** a small made-up business, so the galaxy has something to show on day one. You can remove them later.
 4. **A one-minute tour**, with a **Try it** button on each step.
 
-After that: **? Help** (top-left) lists everything Jarvis can do with examples you can click. **⚙ Settings** changes your name, key, sample notes and browser, opens your notes folder, and has **Quit Jarvis**.
+After that: **? Help** (top-left) lists everything Jarvis can do with examples you can click. **⚙ Settings** changes your name, key, sample notes and browser, opens your notes folder, and has **Quit Jarvis** and **Uninstall…**.
 
 ### Updating, stopping, uninstalling
-- **Update:** download the new ZIP and run *Install Jarvis* again. Your notes and settings are kept.
+- **Update:** run the newer Jarvis-Setup.exe (Mac: the newer ZIP's installer). Your notes and settings are kept.
 - **Stop:** ⚙ Settings → **Quit Jarvis** (on Windows, the × on the small Jarvis card does it too).
-- **Uninstall:** Windows: *Settings → Apps → Jarvis → Uninstall* (it asks before touching your notes). Mac: drag Jarvis from Applications to the Bin; your notes stay in `~/Library/Application Support/Jarvis` until you delete that folder.
+- **Uninstall:** ⚙ Settings → **Uninstall…**, or on Windows *Settings → Apps → Jarvis → Uninstall*. It asks whether to keep your notes (keeping them is the default) and removes Jarvis's private Python if Setup installed one. Mac: drag Jarvis from Applications to the Bin; your notes stay in `~/Library/Application Support/Jarvis` until you delete that folder.
 - **Where your notes are:** ⚙ Settings → **Open my notes folder**. (Windows: `%LOCALAPPDATA%\Programs\Jarvis\notes`; Mac: `~/Library/Application Support/Jarvis/notes`.)
 
 ---
@@ -78,14 +79,14 @@ Voice works best in **Chrome** or **Edge**.
 
 ## If something goes wrong
 
-- **Windows says it can't find Python** even though you installed it: Settings → Apps → Advanced app settings → App execution aliases → turn **off** the ones for `python.exe` and `python3.exe`, then try again.
-- **Jarvis doesn't start:** the boot screen says so; the details are in `logs/server.log` in the Jarvis folder. Opening Jarvis again from its icon usually sorts it.
+- **The Windows .bat installer says it can't find Python** even though you installed it: Settings → Apps → Advanced app settings → App execution aliases → turn **off** the ones for `python.exe` and `python3.exe`, then try again. (Jarvis-Setup.exe doesn't have this problem.)
+- **Jarvis doesn't start:** the boot screen says so; the details are in `logs\server.log` in the Jarvis folder (Windows: `%LOCALAPPDATA%\Programs\Jarvis`). Opening Jarvis again from its icon usually sorts it.
 - **Jarvis says the key isn't working:** ⚙ Settings → OpenRouter key → Change, paste a fresh key from openrouter.ai/keys, press Test.
 - **The galaxy is empty:** that's normal until you save a note or add the sample notes (⚙ Settings).
 - **Microphone doesn't work:** allow microphone access when the browser asks (the icon at the left of the address bar).
 
 ## For the curious
 
-Plain Python (standard library only, no installs beyond Python itself) and a single web page. `server.py` is the brain, `viewer/index.html` is the galaxy, and each feature has its own small file (`sorting.py`, `reviews.py`, `stars.py`, ...). `python preflight.py` (while Jarvis is running) checks everything end to end, and the `test_*.py` files are the tests.
+Plain Python (standard library only, no installs beyond Python itself) and a single web page, all in `app/`. `server.py` is the brain, `viewer/index.html` is the galaxy, and each feature has its own small file (`sorting.py`, `reviews.py`, `stars.py`, ...). `python preflight.py` (while Jarvis is running) checks everything end to end, and the `test_*.py` files are the tests.
 
 Built by Liam, with Claude.

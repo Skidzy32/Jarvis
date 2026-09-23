@@ -1190,6 +1190,23 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send_json(200, {"ok": False, "path": NOTES_DIR, "error": str(e)})
             return
+        if route == "/system/uninstall":
+            # 4.4.0: "Uninstall Jarvis…" in Settings. Setup.exe installs have
+            # Windows' own uninstaller (unins000.exe); otherwise installer.py.
+            # Either one asks before removing anything, then Jarvis stops.
+            try:
+                unins = os.path.join(PROJECT_ROOT, "unins000.exe")
+                if sys.platform == "win32" and os.path.exists(unins):
+                    subprocess.Popen([unins], cwd=PROJECT_ROOT, creationflags=0x00000008)
+                else:
+                    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                    py = pyw if sys.platform == "win32" and os.path.exists(pyw) else sys.executable
+                    kw = {"creationflags": 0x00000008} if sys.platform == "win32" else {"start_new_session": True}
+                    subprocess.Popen([py, os.path.join(PROJECT_ROOT, "installer.py"), "--uninstall"], cwd=PROJECT_ROOT, **kw)
+                self._send_json(200, {"ok": True, "spoken": "The uninstaller is open, sir. It asks before removing anything."})
+            except OSError as e:
+                self._send_json(200, {"ok": False, "spoken": f"I couldn't start the uninstaller: {e}"})
+            return
         if route == "/system/quit":
             # 4.3.0: "Quit Jarvis" from Settings. Ends a running focus session
             # properly (report + history), answers, then stops. On Windows the

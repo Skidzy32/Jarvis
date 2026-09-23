@@ -3136,7 +3136,7 @@ function renderSettings() {
           .map(([v, l]) => `<option value="${v}" ${SETUP.app_browser === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p class="note">Jarvis ${SETUP.version || ''}. Your notes: the <code>notes</code> folder inside the Jarvis folder. Deleted and replaced notes are kept in <code>notes/.jarvis/bin</code> and <code>notes/.jarvis/versions</code>.</p>
     <p id="setup-msg"></p>
-    <div class="row"><button data-notes>Open my notes folder</button><button data-quit title="Stops Jarvis completely. Open it again from its icon.">Quit Jarvis</button><button class="primary" data-close>Done</button></div>`;
+    <div class="row"><button data-notes>Open my notes folder</button><button data-quit title="Stops Jarvis completely. Open it again from its icon.">Quit Jarvis</button><button data-uninstall title="Removes Jarvis from this computer. It asks first, and asks about your notes.">Uninstall…</button><button class="primary" data-close>Done</button></div>`;
   setupEl.style.display = 'flex';
   document.getElementById('set-browser').onchange = async e => {
     const d = await (await fetch('/setup/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3148,6 +3148,12 @@ function renderSettings() {
       const d = await (await fetch('/system/open-notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
       document.getElementById('setup-msg').innerHTML = d.ok ? `<span class="msg-ok">Opened: ${d.path}</span>`
                                                              : `<span class="msg-bad">Your notes are in: ${d.path}</span>`;
+    } catch (e) {}
+  };
+  setupCard.querySelector('[data-uninstall]').onclick = async () => {
+    try {
+      const d = await (await fetch('/system/uninstall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+      document.getElementById('setup-msg').innerHTML = `<span class="${d.ok ? 'msg-ok' : 'msg-bad'}">${d.spoken}</span>`;
     } catch (e) {}
   };
   setupCard.querySelector('[data-quit]').onclick = async () => {

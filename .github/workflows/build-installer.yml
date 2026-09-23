@@ -1,0 +1,59 @@
+# (Lives in installer/ in your own folder; make_share.py puts it in
+# .github/workflows/ in the shared copy, which is where GitHub looks.)
+# 4.4.0: builds Jarvis-Setup.exe on GitHub's own Windows computers and
+# publishes it under Releases. Runs by itself when a version tag (v4.4.0...)
+# is pushed -- make_share.py adds the tag, `git push --follow-tags` sends it.
+# Can also be run by hand: Actions tab -> Build Jarvis-Setup.exe -> Run workflow
+# (that build appears as a download on the run's page, not as a Release).
+name: Build Jarvis-Setup.exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # to publish the Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Python for Windows from python.org (bundled into Setup)
+        shell: pwsh
+        run: |
+          $v = "3.13.15"
+          $out = "installer\deps\python-$v-amd64.exe"
+          New-Item -ItemType Directory -Force installer\deps | Out-Null
+          Invoke-WebRequest "https://www.python.org/ftp/python/$v/python-$v-amd64.exe" -OutFile $out
+          # Only ever bundle the genuine, signed installer.
+          $sig = Get-AuthenticodeSignature $out
+          if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            throw "Python installer signature check failed: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          Write-Host "Signed by: $($sig.SignerCertificate.Subject)"
+
+      - name: Install Inno Setup
+        run: choco upgrade innosetup -y --no-progress    # installs it, or updates an older copy (needs 6.3+)
+
+      - name: Build Jarvis-Setup.exe
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\jarvis.iss'
+
+      - name: Keep the build (manual runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Setup
+          path: installer/Output/Jarvis-Setup.exe
+
+      - name: Publish the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Jarvis ${{ github.ref_name }}
+          files: installer/Output/Jarvis-Setup.exe
+          body: |
+            **Windows:** download **Jarvis-Setup.exe** below and run it. Windows may say "Windows protected your PC" (it isn't code-signed): **More info -> Run anyway**.
+            **Mac:** download the source code (zip) below, unzip it, then right-click **Install Jarvis (Mac).command** -> Open.

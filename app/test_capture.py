@@ -200,6 +200,7 @@ def get(path):
 
 try:
     server.startup_rebuild()
+    inbox.seed_followups(NOTES)          # 4.0.0: the server no longer adds the owner's F1/F2; this scenario uses them
     inbox_now = get("/inbox")
     f1_item = next((i for i in inbox_now["items"] if "OpenRouter" in i["title"]), None)
     f2_item = next((i for i in inbox_now["items"] if "reading and processing images" in i["title"]), None)

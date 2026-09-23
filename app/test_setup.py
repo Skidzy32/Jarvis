@@ -87,12 +87,24 @@ have = set()
 for root, dirs, files in os.walk(D):
     dirs[:] = [d for d in dirs if d != ".git"]
     have |= {os.path.relpath(os.path.join(root, x), D).replace(os.sep, "/") for x in files}
-check("made", rc == 0 and "server.py" in have and "viewer/index.html" in have and "README.md" in have and "LICENSE" in have)
-check("both starters and the demo notes are in", {"Start Jarvis.bat", "Start Jarvis (Mac).command"} <= have and any(h.startswith("examples/") for h in have))
+check("made", rc == 0 and "app/server.py" in have and "app/viewer/index.html" in have and "README.md" in have and "LICENSE" in have)
+top = {h for h in have if "/" not in h}
+check("4.4.0: the top level is tidy (README, LICENSE, the two installers)", top == {"README.md", "LICENSE", ".gitignore", ".gitattributes",
+      "Install Jarvis (Mac).command", "Install Jarvis (Windows).bat"})
+check("4.4.0: Setup.exe recipe and GitHub build are there", {"installer/jarvis.iss", "installer/wizard-large.bmp",
+      ".github/workflows/build-installer.yml"} <= have)
+check("the starters and the demo notes are in app/", {"app/Start Jarvis.bat", "app/Start Jarvis (Mac).command"} <= have
+      and any(h.startswith("app/examples/") for h in have))
 check("none of your things are", not any(h.startswith(("notes/", "usage/", "logs/")) or h.split("/")[-1] in make_share.NEVER for h in have))
 if shutil.which("git"):
-    mode = subprocess.run(["git", "ls-files", "-s", "Start Jarvis (Mac).command"], cwd=D, capture_output=True, text=True).stdout
-    check("git: fresh repository, Mac starter marked runnable", mode.startswith("100755"))
+    mode = subprocess.run(["git", "ls-files", "-s", "Install Jarvis (Mac).command"], cwd=D, capture_output=True, text=True).stdout
+    check("git: fresh repository, Mac installer marked runnable", mode.startswith("100755"))
+    tags = subprocess.run(["git", "tag"], cwd=D, capture_output=True, text=True).stdout.split()
+    check("git: tagged v" + make_share.VERSION + " (pushing it builds Setup.exe)", "v" + make_share.VERSION in tags)
+    rc2 = make_share.main(D)                       # 4.4.0: updating an existing shared copy (it has .git)
+    log = subprocess.run(["git", "log", "--oneline"], cwd=D, capture_output=True, text=True).stdout
+    check("updating a shared copy that has git history works (and keeps it)", rc2 == 0 and os.path.exists(os.path.join(D, "app", "server.py"))
+          and len(log.strip().splitlines()) >= 1)
 planted = os.path.join(tempfile.mkdtemp(), "leaky"); os.makedirs(planted)
 open(os.path.join(planted, "x.py"), "w").write('KEY = "sk-or-v1-' + "cd" * 32 + '"\n')
 open(os.path.join(planted, "config.json"), "w").write("{}")

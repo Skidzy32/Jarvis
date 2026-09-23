@@ -69,7 +69,7 @@ else:
         time.sleep(0.25)
         if L2.is_running(): up = True; break
     check("Jarvis started in the background", up)
-    check("the boot screen was opened", opened and opened[0].endswith("viewer/boot.html"))
+    check("the boot screen was opened", opened and opened[0] == L2.APP_URL + "boot.html")
     body = urllib.request.urlopen(L2.APP_URL + "setup/state", timeout=3).read()
     check("a fresh copy is a first run (setup screens will show)", json.loads(body)["first_run"] is True)
     req = urllib.request.Request(L2.APP_URL + "setup/save", data=json.dumps({"app_browser": "brave"}).encode(),

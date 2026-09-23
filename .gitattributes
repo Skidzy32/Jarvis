@@ -6,6 +6,8 @@
 *.html     text eol=lf
 *.pyw      text eol=lf
 *.iss      text eol=crlf
+*.yml      text eol=lf
 *.png      binary
 *.ico      binary
 *.icns     binary
+*.bmp      binary

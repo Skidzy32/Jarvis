@@ -13,6 +13,7 @@
 # updates Jarvis; your notes and settings are kept.
 # ============================================================
 cd "$(dirname "$0")" || exit 1
+[ -f installer.py ] || cd app || exit 1     # 4.4.0: the program lives in app/ in a download
 
 echo "================================================"
 echo "  Installing Jarvis"

@@ -41,3 +41,7 @@ review_settings.json
 # local test helpers
 _testrun.py
 overlay_position.json
+
+# Setup.exe build output and the Python installer GitHub bundles into it (4.4.0)
+installer/Output/
+installer/deps/
