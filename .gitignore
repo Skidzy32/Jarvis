@@ -1,0 +1,43 @@
+# Holds your real OpenRouter API key once you've run the server once —
+# never commit this.
+config.json
+
+# Auto-generated on every run; not source.
+viewer/graph-data.js
+__pycache__/
+*.pyc
+
+# Session-specific accountability data and captured notes — personal
+# content, not project source. Remove these two lines if you'd rather
+# track your own notes/captures in git (that's a reasonable choice too,
+# it's your data) — they're excluded by default here just to keep a
+# first commit from scooping up anything personal without asking.
+focus_ledger.json
+notes/
+
+# Local logs from running the server yourself.
+server.log
+
+# Real browser profile data (cache, cookies, local storage) created the
+# first time a browser_launchers\*.bat actually launches a browser with
+# tab tracking on. This is your browsing data, not project source.
+browser_launchers/jarvis-profiles/
+
+# Jarvis's own logs and process id (2.2.1): the hidden server and
+# countdown card write their output here since they no longer have
+# console windows. Local diagnostics, not project source.
+logs/
+
+# Personal OS (2.3.0): Jarvis's records beside your notes (where each note
+# came from, your exact words, its history) and the search index built
+# from them -- personal data, like the captures. The usage tracker's daily
+# totals and reports, and its settings (your never-record list) -- all
+# local to this computer only.
+usage/
+
+# Your review times and pop-up switch (2.7.0) -- personal settings.
+review_settings.json
+
+# local test helpers
+_testrun.py
+overlay_position.json

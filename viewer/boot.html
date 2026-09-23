@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S.</title>
+<link rel="icon" href="assets/jarvis.png">
+<!--
+  4.3.0: the boot screen. The launcher opens this file straight from disk,
+  so it appears instantly -- before the server is even up. It waits for
+  Jarvis to answer (by loading its icon from http://localhost:4700), plays
+  the start-up lines, then hands over to the real page. If Jarvis doesn't
+  come up, it says so plainly and where to look. No internet needed.
+-->
+<style>
+  :root { --c: #5fe3ff; }
+  html, body { margin: 0; height: 100%; background: #000; color: #dff8ff; overflow: hidden;
+               font-family: ui-monospace, Consolas, "SF Mono", monospace; }
+  #stars { position: fixed; inset: 0; }
+  main { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+  svg { width: min(300px, 60vw); height: auto; overflow: visible; filter: drop-shadow(0 0 10px rgba(95,227,255,0.5)); }
+  .spin { transform-box: fill-box; transform-origin: center; animation: spin var(--d) linear infinite; }
+  .rev { animation-direction: reverse; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .core { transform-box: fill-box; transform-origin: center; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.7; transform: scale(0.94); } }
+  .arc { stroke-dasharray: 600; stroke-dashoffset: 600; animation: draw 1.2s ease-out forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  h1 { margin: 0; font-size: 20px; letter-spacing: 0.5em; padding-left: 0.5em; font-weight: 700; color: #e9fdff;
+       text-shadow: 0 0 12px rgba(95,227,255,0.7); opacity: 0; animation: fadein 0.8s 0.4s forwards; }
+  @keyframes fadein { to { opacity: 1; } }
+  #lines { min-height: 132px; width: min(420px, 86vw); font-size: 12.5px; line-height: 1.75; color: #8fd9ee; }
+  #lines div { opacity: 0; animation: fadein 0.35s forwards; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #lines div::before { content: "› "; color: var(--c); }
+  #lines .ok::after { content: "  OK"; color: #8fffb8; }
+  #lines .bad { color: #ffb0b0; white-space: normal; }
+  #lines .bad::before { content: "! "; color: #ff6b6b; }
+  button { margin-top: 6px; background: #1a2140; color: #e8e8f0; border: 1px solid #3a4468; border-radius: 8px; padding: 7px 14px;
+           font: 12px ui-monospace, Consolas, monospace; cursor: pointer; }
+  body.leaving main { transition: opacity 0.5s, transform 0.5s; opacity: 0; transform: scale(1.06); }
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<main>
+  <svg viewBox="-100 -100 200 200" aria-hidden="true">
+    <defs><radialGradient id="core"><stop offset="0" stop-color="#ffffff"/><stop offset="0.35" stop-color="#8ff0ff"/>
+      <stop offset="0.8" stop-color="#1b7a9a" stop-opacity="0.5"/><stop offset="1" stop-color="#0b2a38" stop-opacity="0"/></radialGradient></defs>
+    <g class="spin" style="--d:40s"><circle r="92" fill="none" stroke="#5fe3ff" stroke-opacity="0.55" stroke-width="5" stroke-dasharray="1.2 4.6"/></g>
+    <g class="spin rev" style="--d:18s"><circle class="arc" r="80" fill="none" stroke="#5fe3ff" stroke-width="3" stroke-linecap="round"
+       style="stroke-dasharray:60 24 14 24 90 40 12 38"/></g>
+    <circle r="71" fill="none" stroke="#5fe3ff" stroke-opacity="0.25" stroke-width="1"/>
+    <g class="spin" style="--d:9s"><circle r="64" fill="none" stroke="#5fe3ff" stroke-opacity="0.9" stroke-width="1.6" stroke-dasharray="120 30 40 30 80 102"/></g>
+    <g class="spin rev" style="--d:5s"><circle r="55" fill="none" stroke="#9ff0ff" stroke-opacity="0.7" stroke-width="4" stroke-dasharray="8 6"/></g>
+    <circle r="46" fill="rgba(4,20,28,0.9)" stroke="#5fe3ff" stroke-opacity="0.5" stroke-width="1"/>
+    <circle class="core" r="40" fill="url(#core)" opacity="0.8"/>
+  </svg>
+  <h1>J.A.R.V.I.S.</h1>
+  <div id="lines"></div>
+</main>
+<script>
+const URL_APP = 'http://localhost:4700/?from=boot';
+const PING = 'http://localhost:4700/assets/jarvis.png';
+const GIVE_UP_MS = 30000;
+const lines = document.getElementById('lines');
+function line(text, cls) { const d = document.createElement('div'); d.textContent = text; if (cls) d.className = cls; lines.appendChild(d); return d; }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+function ping() {
+  return new Promise(res => { const i = new Image(); i.onload = () => res(true); i.onerror = () => res(false); i.src = PING + '?t=' + Date.now(); });
+}
+(function stars() {
+  const c = document.getElementById('stars'), g = c.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2);
+  const size = () => { c.width = innerWidth * dpr; c.height = innerHeight * dpr; c.style.width = innerWidth + 'px'; c.style.height = innerHeight + 'px'; };
+  size(); addEventListener('resize', size);
+  const S = Array.from({ length: 350 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() * 0.9 + 0.2, a: Math.random(), d: (Math.random() - 0.5) * 0.01 }));
+  (function tick() {
+    g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+    for (const s of S) { s.a += s.d; if (s.a < 0 || s.a > 1) s.d *= -1; g.globalAlpha = Math.max(0, Math.min(1, s.a)); g.fillStyle = '#fff';
+      g.beginPath(); g.arc(s.x * c.width, s.y * c.height, s.r * dpr, 0, 6.3); g.fill(); }
+    g.globalAlpha = 1; requestAnimationFrame(tick);
+  })();
+})();
+async function boot() {
+  await wait(700);
+  const first = line('Initialising systems');
+  await wait(450); first.className = 'ok';
+  const core = line('Starting the core');
+  const t0 = Date.now();
+  while (!(await ping())) {
+    if (Date.now() - t0 > GIVE_UP_MS) {
+      core.remove();
+      line("Jarvis didn't start. The reason is in logs/server.log, in the Jarvis folder. " +
+           'Closing this window and opening Jarvis again usually sorts it.', 'bad');
+      const b = document.createElement('button'); b.textContent = 'Try again'; b.onclick = () => location.reload();
+      lines.appendChild(b);
+      return;
+    }
+    await wait(400);
+  }
+  core.className = 'ok';
+  for (const t of ['Loading your notes', 'Waking the galaxy', 'Connecting the brain']) {
+    await wait(330); line(t, 'ok');
+  }
+  await wait(380); line('All systems online.');
+  await wait(650);
+  document.body.classList.add('leaving');
+  await wait(450);
+  location.replace(URL_APP);
+}
+boot();
+</script>
+</body>
+</html>
