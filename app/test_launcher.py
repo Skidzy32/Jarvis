@@ -32,6 +32,9 @@ check("nothing installed -> normal browser", L.find_browser("auto", exists=lambd
 L.IS_WINDOWS, L.IS_MAC = False, True
 check("Mac: finds Chrome in Applications", L.find_browser("auto", exists=lambda p: p.startswith("/Applications/Google Chrome"))[0] == "chrome")
 L.IS_WINDOWS = L.IS_MAC = False
+ocmd = L.app_window_command(("opera", "Opera GX", 9222, "opera.exe"), "http://localhost:4700/boot.html")
+check("4.4.1: Opera GX gets a normal window at the web address (no --app, which it ignores)",
+      "http://localhost:4700/boot.html" in ocmd and not any(a.startswith("--app") for a in ocmd) and "--remote-debugging-port=9222" in ocmd)
 cmd = L.app_window_command(("chrome", "Chrome", 9223, "chrome.exe"), "file:///x/boot.html")
 check("app window: no tabs/address bar, tab tracking port, Jarvis's own profile",
       cmd[1] == "--app=file:///x/boot.html" and "--remote-debugging-port=9223" in cmd

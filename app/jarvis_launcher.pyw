@@ -1,5 +1,5 @@
 """
-jarvis_launcher.pyw — 4.3.0: what the Jarvis icon runs.
+jarvis_launcher.pyw — 4.4.1: what the Jarvis icon runs.
 
 Double-clicking the Jarvis icon (Desktop, Start menu, or Applications on a
 Mac) runs this with Python's windowless interpreter, so there are no console
@@ -101,11 +101,28 @@ def available_browsers(exists=os.path.exists, expand=os.path.expandvars):
     return out
 
 
+# 4.4.1: Opera GX has no reliable app mode: given --app and a file:// page
+# it can open nothing at all (seen on the user's PC: the window never loaded).
+# It gets a normal window at Jarvis's web address instead, the way
+# browser_launchers/start-opera-gx.bat always opened it.
+NO_APP_MODE = {"opera"}
+
+
+def wait_for_jarvis(seconds=25):
+    end = time.time() + seconds
+    while time.time() < end:
+        if is_running(0.5):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def app_window_command(browser, url):
     key, _name, port, exe = browser
     profile = os.path.join(ROOT, "browser_launchers", "jarvis-profiles", key)
-    return [exe, f"--app={url}", f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
-            "--window-size=1440,900", "--no-first-run", "--no-default-browser-check"]
+    opening = [url] if key in NO_APP_MODE else [f"--app={url}", "--window-size=1440,900"]
+    return [exe, *opening, f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
+            "--no-first-run", "--no-default-browser-check"]
 
 
 def is_running(timeout=1.0):
@@ -140,6 +157,9 @@ def start_jarvis():
 
 def open_window(url):
     browser = find_browser(preference())
+    if browser and browser[0] in NO_APP_MODE and url.startswith("file:"):
+        wait_for_jarvis()
+        url = APP_URL + "boot.html"
     if browser:
         try:
             kw = {"creationflags": 0x00000008} if IS_WINDOWS else {"start_new_session": True}
@@ -153,10 +173,7 @@ def open_window(url):
     # opens .html FILES (not always your browser), so wait for Jarvis and
     # open a normal web address instead, which always goes to your browser.
     if url.startswith("file:"):
-        for _ in range(100):
-            if is_running(0.5):
-                break
-            time.sleep(0.25)
+        wait_for_jarvis()
         url = APP_URL + "boot.html"
     webbrowser.open(url)
     log("opened the default browser")

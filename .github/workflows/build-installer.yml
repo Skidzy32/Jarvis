@@ -3,8 +3,9 @@
 # 4.4.0: builds Jarvis-Setup.exe on GitHub's own Windows computers and
 # publishes it under Releases. Runs by itself when a version tag (v4.4.0...)
 # is pushed -- make_share.py adds the tag, `git push --follow-tags` sends it.
-# Can also be run by hand: Actions tab -> Build Jarvis-Setup.exe -> Run workflow
-# (that build appears as a download on the run's page, not as a Release).
+# Can also be run by hand: Actions tab -> Build Jarvis-Setup.exe -> Run workflow.
+# 4.4.1: either way it publishes the Release (tag v<version from jarvis.iss>),
+# so the "latest/download/Jarvis-Setup.exe" link always works.
 name: Build Jarvis-Setup.exe
 
 on:
@@ -38,6 +39,13 @@ jobs:
       - name: Install Inno Setup
         run: choco upgrade innosetup -y --no-progress    # installs it, or updates an older copy (needs 6.3+)
 
+      - name: Read the version
+        id: ver
+        shell: pwsh
+        run: |
+          $m = Select-String -Path installer\jarvis.iss -Pattern '#define AppVersion "([^"]+)"'
+          "version=$($m.Matches[0].Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
       - name: Build Jarvis-Setup.exe
         shell: pwsh
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\jarvis.iss'
@@ -49,10 +57,12 @@ jobs:
           path: installer/Output/Jarvis-Setup.exe
 
       - name: Publish the Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: Jarvis ${{ github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          name: Jarvis v${{ steps.ver.outputs.version }}
           files: installer/Output/Jarvis-Setup.exe
           body: |
             **Windows:** download **Jarvis-Setup.exe** below and run it. Windows may say "Windows protected your PC" (it isn't code-signed): **More info -> Run anyway**.

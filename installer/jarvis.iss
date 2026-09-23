@@ -26,7 +26,7 @@
 ; your PC" the first time: More info -> Run anyway.
 ; ============================================================
 
-#define AppVersion "4.4.0"
+#define AppVersion "4.4.1"
 #define PyVersion "3.13.15"
 #define PySetup "python-" + PyVersion + "-amd64.exe"
 
@@ -180,7 +180,7 @@ begin
             or ((C <> '') and FileExists(ExpandConstant(C)));
 end;
 
-procedure AddBrowser(const Key, Name: String; IsThere: Boolean);
+procedure AddBrowser(const Key, Name, How: String; IsThere: Boolean);
 var
   N: Integer;
 begin
@@ -188,23 +188,23 @@ begin
   N := GetArrayLength(BrowserKeys);
   SetArrayLength(BrowserKeys, N + 1);
   BrowserKeys[N] := Key;
-  BrowserPage.Add(Name + ' -- its own clean window, like an app');
+  BrowserPage.Add(Name + ' -- ' + How);
 end;
 
 procedure InitializeWizard();
 begin
   BrowserPage := CreateInputOptionPage(wpSelectTasks, 'Which browser should Jarvis open in?',
     'Jarvis opens in its own window, like an app.',
-    'Chrome, Edge, Brave or Opera GX give Jarvis a clean window with no tabs or address bar, and let focus ' +
+    'Chrome, Edge or Brave give Jarvis a clean window with no tabs or address bar. Any of the four lets focus ' +
     'sessions see which site you''re on. You can change this later in Jarvis''s Settings.',
     True, False);
-  AddBrowser('chrome', 'Chrome', Found('{commonpf64}\Google\Chrome\Application\chrome.exe',
+  AddBrowser('chrome', 'Chrome', 'its own clean window, like an app', Found('{commonpf64}\Google\Chrome\Application\chrome.exe',
     '{commonpf32}\Google\Chrome\Application\chrome.exe', '{localappdata}\Google\Chrome\Application\chrome.exe'));
-  AddBrowser('edge', 'Microsoft Edge', Found('{commonpf32}\Microsoft\Edge\Application\msedge.exe',
+  AddBrowser('edge', 'Microsoft Edge', 'its own clean window, like an app', Found('{commonpf32}\Microsoft\Edge\Application\msedge.exe',
     '{commonpf64}\Microsoft\Edge\Application\msedge.exe', ''));
-  AddBrowser('brave', 'Brave', Found('{commonpf64}\BraveSoftware\Brave-Browser\Application\brave.exe',
+  AddBrowser('brave', 'Brave', 'its own clean window, like an app', Found('{commonpf64}\BraveSoftware\Brave-Browser\Application\brave.exe',
     '{commonpf32}\BraveSoftware\Brave-Browser\Application\brave.exe', '{localappdata}\BraveSoftware\Brave-Browser\Application\brave.exe'));
-  AddBrowser('opera', 'Opera GX', Found('{localappdata}\Programs\Opera GX\opera.exe',
+  AddBrowser('opera', 'Opera GX', 'a separate Opera GX window', Found('{localappdata}\Programs\Opera GX\opera.exe',
     '{localappdata}\Programs\Opera GX\launcher.exe', ''));
   BrowserPage.Add('My normal browser -- as a tab');
   BrowserPage.SelectedValueIndex := 0;
