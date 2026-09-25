@@ -38,6 +38,9 @@ import maintenance
 import links
 import actions
 import stars
+import knowledge      # 4.5.0: what Jarvis knows about each note (type, source, time)
+import activity       # 4.5.0: one audit trail
+import retrieval      # 4.6.0: finding the right notes (layered, local)
 import setup_flow
 import organise
 import usage_tracker
@@ -306,7 +309,11 @@ SYSTEM_PROMPT = (
     "little dignity. Never invent a source, never pad, never pretend a "
     "loosely related note is the answer.\n"
     "- Handle small talk and pleasantries briefly and in character, without "
-    "treating them as real questions about the notes.\n\n"
+    "treating them as real questions about the notes.\n"
+    "- A note marked NOT current (superseded, reversed, historical) is what "
+    "used to be true. Never present it as how things are now; say it was "
+    "the case before. A note marked unconfirmed is Jarvis's own reading, not "
+    "something the user said.\n\n"
     "Judgment, not just agreement:\n"
     "- You are not a yes-man. If the user's stated plan has a real flaw, or "
     "a better alternative plainly exists, say so once, plainly and "
@@ -418,6 +425,16 @@ STOPWORDS = {
     "really", "very", "much", "lot", "want", "need", "like", "feel", "think",
     "know", "tell", "for", "with", "about", "there", "here", "at", "as",
 }
+
+
+def find_notes(question, nodes):
+    """4.6.0: layered retrieval (retrieval.py). Falls back to the old
+    keyword scoring if anything in it fails, so chat always works."""
+    try:
+        return retrieval.relevant_graph_nodes(question, nodes, NOTES_DIR, TOP_K_NOTES)
+    except Exception as e:
+        print(f"[retrieval] fell back to keyword scoring: {e!r}")
+        return score_notes(question, nodes)
 
 
 def score_notes(question, nodes):
@@ -1059,6 +1076,32 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/diag":
             self._send_json(200, diag_report())
             return
+        if route in ("/node", "/nodes", "/activity"):
+            # 4.5.0: what Jarvis knows about a note (/node?path= or ?id=), all
+            # notes (/nodes), and the audit trail (/activity?limit=&id=).
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                if route == "/activity":
+                    lim = max(1, min(500, int((q.get("limit") or ["100"])[0])))
+                    self._send_json(200, {"ok": True, "activity": activity.read(NOTES_DIR, lim, (q.get("id") or [None])[0])})
+                elif route == "/nodes":
+                    self._send_json(200, {"ok": True, "nodes": knowledge.all_nodes(NOTES_DIR)})
+                else:
+                    rid, p = (q.get("id") or [""])[0], (q.get("path") or [""])[0]
+                    recs, _ = records.load_all(NOTES_DIR)
+                    sc = recs.get(rid) if rid else (stars._note(p, NOTES_DIR)[1] if p else None)
+                    if not sc:
+                        raise ValueError("I can't find that note")
+                    n = knowledge.node(sc, recs, NOTES_DIR)
+                    n["activity"] = activity.read(NOTES_DIR, 20, sc["id"])
+                    n["type_choices"] = list(knowledge.TYPES)
+                    n["titles"] = {i: knowledge._title(recs[i], NOTES_DIR) for i in
+                                   set(n["supersedes"] + ([n["superseded_by"]] if n["superseded_by"] else [])
+                                       + n["related_decisions"] + n["related_tasks"]) if i in recs}
+                    self._send_json(200, dict(ok=True, node=n))
+            except (ValueError, OSError) as e:
+                self._send_json(200, {"ok": False, "spoken": str(e)})
+            return
         if route == "/loops":
             ov = loops.overview(NOTES_DIR)
             ov["spoken"] = loops.spoken_loops(ov)
@@ -1086,8 +1129,9 @@ class Handler(BaseHTTPRequestHandler):
             # scoring /chat uses -- so the galaxy can show them being thought about.
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             try:
-                nodes = score_notes((q.get("q") or [""])[0][:500], load_graph()["nodes"])
-                self._send_json(200, {"ids": [n["id"] for n in nodes]})
+                nodes = find_notes((q.get("q") or [""])[0][:500], load_graph()["nodes"])
+                self._send_json(200, {"ids": [n["id"] for n in nodes],
+                                      "why": {str(n["id"]): n.get("why", []) for n in nodes}})
             except (OSError, ValueError):
                 self._send_json(200, {"ids": []})
             return
@@ -1242,6 +1286,21 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/stars":
             self._handle_stars()
             return
+        if route == "/node/set":
+            # 4.5.0: you set a note's type / state / importance, or say it
+            # replaces an older note. Undoable; recorded in the activity trail.
+            body = self._read_json_body() or {}
+            try:
+                rid = body.get("id") or (stars._note(body.get("path"), NOTES_DIR)[1]["id"] if body.get("path") else None)
+                if body.get("supersedes_path"):
+                    body["supersedes"] = stars._note(body["supersedes_path"], NOTES_DIR)[1]["id"]
+                changes = {k: body[k] for k in ("type", "state", "importance", "supersedes", "clear") if body.get(k) not in (None, "")}
+                spoken, token = knowledge.set_meta(rid, NOTES_DIR, **changes)
+                self._send_json(200, {"ok": True, "spoken": spoken, "undo": token,
+                                      "node": knowledge.node(records.load_all(NOTES_DIR)[0][rid], None, NOTES_DIR)})
+            except (ValueError, OSError, KeyError) as e:
+                self._send_json(200, {"ok": False, "spoken": str(e)})
+            return
         if route in ("/actions", "/actions/undo"):
             self._handle_actions(route)
             return
@@ -1282,7 +1341,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/ask":
             body = self._read_json_body() or {}
-            a = views.answer(body.get("question", ""), NOTES_DIR)
+            q = body.get("question", "")
+            a = None
+            try:
+                p = retrieval.answer_preferences(q, NOTES_DIR)       # 4.6.0: now vs before
+                if p:
+                    a = dict(p, intent="preferences")
+            except Exception as e:
+                print(f"[retrieval] preferences: {e!r}")
+            a = a or views.answer(q, NOTES_DIR)
             self._send_json(200, a or {"intent": None})
             return
         if route in ("/reviews/mark", "/reviews/save"):
@@ -1346,10 +1413,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(e)})
             return
 
-        top_notes = score_notes(question, graph["nodes"])
-        notes_block = "\n\n".join(
-            f"[Note {n['id']}] {n['label']}\n{n['excerpt']}" for n in top_notes
-        )
+        top_notes = find_notes(question, graph["nodes"])
+        try:
+            knowledge.touch_paths([n.get("path") for n in top_notes], NOTES_DIR)   # 4.5.0: last referenced
+        except Exception:
+            pass
+        notes_block = retrieval.notes_block(top_notes)
 
         messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\nNOTES:\n{notes_block}"}]
         messages.extend(conversation_history[-MAX_HISTORY_TURNS * 2:])

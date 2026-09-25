@@ -23,7 +23,7 @@ print("Test 1: not enough data -> says so, with the numbers, and offers nothing"
 S = tempfile.mkdtemp(prefix="jarvis-pat-small-")
 make_notes(S, ["Call Dave", "Dave about the van", "Dave's birthday"])
 sorting.sort_inbox(StandIn({"Dave": reading(people=["Dave"])}), {}, notes_dir=S)
-r = patterns.detect(S, today, usage_dir=EMPTY_USAGE)
+r = patterns.detect(S, max(today, datetime.date.today()), usage_dir=EMPTY_USAGE)   # notes made by the real clock
 check("not ready, no patterns even though Dave is in 3 notes", not r["ready"] and r["patterns"] == [])
 check("spoken says not enough yet, with counts", r["spoken"].startswith("Not enough yet") and "3 sorted notes" in r["spoken"]
       and str(patterns.MIN_NOTES) in r["spoken"])

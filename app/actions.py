@@ -315,6 +315,11 @@ def undo(token, notes_dir=None):
             for f in (rec_file, note_file):
                 if os.path.isfile(f):
                     os.remove(f)
+            try:
+                import activity        # 4.5.0: the audit trail keeps what was taken back
+                activity.log("removed by undo", root, record_id=c["id"], note=c["path"], origin="user", approved=True)
+            except Exception:
+                pass
         gone = {c["id"] for c in u["created"]}
         if gone:
             recs, _ = records.load_all(root)

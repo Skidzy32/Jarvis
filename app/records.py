@@ -159,7 +159,27 @@ def _sidecar_path(record_id, notes_dir=None):
 
 
 def save(sidecar, notes_dir=None):
+    # 4.5.0: history entries added since the last save also go to the one
+    # activity trail (activity.py). A record saved before 4.5.0 has no
+    # counter: its older history is taken as already known, not re-logged.
+    hist = sidecar.get("history", [])
+    done = sidecar.get("logged_events")
+    if done is None:
+        done = 0
+        try:
+            with open(_sidecar_path(sidecar["id"], notes_dir), encoding="utf-8") as f:
+                done = len(json.load(f).get("history", []))
+        except (OSError, ValueError):
+            pass
+    new = hist[done:] if done <= len(hist) else []
+    sidecar["logged_events"] = len(hist)
     _atomic_write_json(_sidecar_path(sidecar["id"], notes_dir), sidecar)
+    if new:
+        try:
+            import activity
+            activity.from_history(sidecar, new, notes_dir)
+        except Exception:
+            pass
 
 
 def load_all(notes_dir=None):

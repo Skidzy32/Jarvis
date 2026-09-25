@@ -42,7 +42,7 @@ LOOP_KINDS = {
     "decision_to_confirm": "to decide", "problem": "to solve", "risk": "to solve",
 }
 LOOP_ORDER = ("to do", "waiting", "to decide", "to solve", "to buy")
-PROJECT_STATUSES = ("active", "paused", "done")
+PROJECT_STATUSES = ("active", "paused", "done", "abandoned")     # 4.5.0: + abandoned
 SUGGEST_MIN = 3
 
 
@@ -258,7 +258,7 @@ def update_project(project_id, notes_dir=None, **changes):
         meta = sc["project_meta"]
         if "status" in changes:
             if changes["status"] not in PROJECT_STATUSES:
-                raise ValueError("status is active, paused or done")
+                raise ValueError("status is active, paused, done or abandoned")
             meta["status"] = changes["status"]
         if "outcome" in changes:
             meta["outcome"] = (changes["outcome"] or "").strip() or None

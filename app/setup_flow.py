@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-VERSION = "4.4.1"
+VERSION = "4.6.0"
 ADDRESS_MODES = ("sir", "madam", "name", "none")
 APP_BROWSERS = ("auto", "chrome", "edge", "brave", "opera", "default")   # 4.3.0: what the Jarvis icon opens
 SAMPLES_SOURCE = os.path.join(ROOT, "examples")

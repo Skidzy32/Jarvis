@@ -108,7 +108,7 @@ def report(notes_dir=None, today=None):
         if loop.get("state") in ("done", "dropped") and \
                 (reviews._days_since(loop.get("closed_at"), today) or 0) >= ARCHIVE_DONE_DAYS:
             reason = f"{'done' if loop['state'] == 'done' else 'dropped'} {reviews._days_since(loop['closed_at'], today)} days ago"
-        elif (sc.get("project_meta") or {}).get("status") == "done":
+        elif (sc.get("project_meta") or {}).get("status") in ("done", "abandoned"):
             reason = "project marked done"
         elif v.get("temporary") and age is not None and age >= ARCHIVE_TEMPORARY_DAYS and not loop.get("state") == "open":
             reason = f"described as a passing thing, {age} days ago"

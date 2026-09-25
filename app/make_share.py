@@ -33,7 +33,7 @@ import shutil
 import subprocess
 import sys
 
-VERSION = "4.4.1"
+VERSION = "4.6.0"
 GITATTRIBUTES = """# Line endings that work on each system, whatever git settings the uploader has.
 *.bat      text eol=crlf
 *.command  text eol=lf

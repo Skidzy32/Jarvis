@@ -218,7 +218,7 @@
   #star-menu button:hover { background: rgba(120,150,255,0.18); }
   #star-menu button.danger { color: #ff9a9a; }
   #star-menu hr { border: 0; border-top: 1px solid #2a3150; margin: 4px 0; }
-  #star-dialog { position: fixed; z-index: 61; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 32px));
+  #star-dialog { position: fixed; z-index: 90; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 32px));
                  box-sizing: border-box; background: rgba(12,16,30,0.98); border: 1px solid #3a4468; border-radius: 10px; padding: 14px; display: none; }
   #star-dialog h3 { margin: 0 0 8px; font-size: 14px; color: #e8e8f0; font-weight: 600; }
   #star-dialog p { margin: 0 0 10px; color: #aab0cc; font-size: 12px; }
@@ -229,6 +229,16 @@
   #star-dialog .row button { padding: 6px 14px; border-radius: 6px; border: 1px solid #3a4468; background: #1a2140; color: #e8e8f0; cursor: pointer; }
   #star-dialog .row button.primary { background: #3553c8; border-color: #3553c8; }
   #star-dialog .row button.danger { background: #8a2c2c; border-color: #8a2c2c; }
+  /* 4.5.0: what Jarvis knows about a note */
+  #star-dialog .kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; font-size: 12px; margin: 6px 0 10px; }
+  #star-dialog .kv .k { color: #8f98c0; }
+  #star-dialog .kv .v { color: #e8e8f0; overflow-wrap: anywhere; }
+  #star-dialog select { background: #0a0d18; color: #e8e8f0; border: 1px solid #3a4468; border-radius: 6px; padding: 4px 6px; font: inherit; }
+  #star-dialog .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; border: 1px solid #3a4468; }
+  #star-dialog .pill.ai { color: #ffcf7a; border-color: #6a5220; }
+  #star-dialog .pill.you { color: #9fe6b4; border-color: #22603a; }
+  #star-dialog .acts { max-height: 160px; overflow: auto; font-size: 11px; color: #aab0cc; border-top: 1px solid #2a3150; padding-top: 6px; }
+  #star-dialog .acts div { padding: 2px 0; }
   #star-banner { position: fixed; z-index: 59; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(53,83,200,0.92); color: #fff;
                  padding: 6px 14px; border-radius: 16px; font-size: 12px; display: none; max-width: calc(100vw - 32px); box-sizing: border-box; }
   /* 3.10.0: the J.A.R.V.I.S. emblem (arc-reactor style) and the model badge */
@@ -1145,7 +1155,7 @@ document.addEventListener('pointerdown', e => { if (!starMenu.contains(e.target)
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   closeStarMenu(); closeDialog();
-  if (linkFrom) { linkFrom = null; banner(''); }
+  if (linkFrom || replaceFrom) { linkFrom = null; replaceFrom = null; banner(''); }
 });
 function paintSelection() {
   setNodeColors(n => selected.has(n.path) ? '#ffd24a' : colorFor(n.group));
@@ -1192,10 +1202,97 @@ function dialog({ title, note, value, multiline, options, okText, danger, onOk }
   }
 }
 
+// ---------- 4.5.0: what Jarvis knows about a note ----------
+// Type, state, where it came from and how sure Jarvis is. An AI reading is
+// shown as such (amber) until you confirm or change it; yours is green.
+let replaceFrom = null;
+const WHO = { you: 'set by you', jarvis: "Jarvis's reading", none: '—' };
+const ORIGIN_WORDS = { user_stated: 'You said or typed it', user_recorded: 'A file you put in your notes',
+  ai_inferred: "Jarvis's reading", ai_suggested: 'Suggested by Jarvis', ai_linked: 'Linked by Jarvis', ai_summarised: 'Summarised by Jarvis',
+  jarvis: 'Jarvis housekeeping' };
+const CONF_WORDS = { certain: 'Certain', likely: 'Likely', uncertain: 'Uncertain', needs_confirmation: 'Needs your confirmation' };
+async function nodeSet(body) {
+  try {
+    const d = await (await fetch('/node/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                 body: JSON.stringify(body) })).json();
+    addMsg(d.spoken, d.ok ? 'assistant' : 'error'); speak(d.spoken);
+    if (d.ok && d.undo) addUndoButton(d.undo);
+    return d;
+  } catch (e) { addMsg('Could not reach the server: ' + e.message, 'error'); return null; }
+}
+function esc(t) { const d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+function fmtWhen(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
+async function showNodeDetails(node) {
+  let r = null;
+  try { r = await (await fetch('/node?path=' + encodeURIComponent(node.path))).json(); } catch (e) {}
+  if (!r || !r.ok) { addMsg((r && r.spoken) || "I couldn't read that note's details.", 'error'); return; }
+  const n = r.node, T = r.node.titles || {};
+  const pill = by => `<span class="pill ${by === 'you' ? 'you' : by === 'jarvis' ? 'ai' : ''}">${esc(WHO[by] || by)}</span>`;
+  const list = ids => ids.length ? ids.map(i => esc(T[i] || i)).join(', ') : '—';
+  const c = n.classification || {};
+  starDialog.innerHTML = `<h3>${esc(n.title)}</h3>
+    <p>What Jarvis knows about this note. Anything in amber is Jarvis's reading, not a fact, until you confirm or change it.</p>
+    <div class="kv">
+      <div class="k">Type</div><div class="v"><select data-type>${(n.type === 'category' ? ['category'] : r.node.type_choices)
+          .map(t => `<option value="${t}" ${t === n.type ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select> ${pill(n.type_set_by)}</div>
+      <div class="k">State</div><div class="v"><select data-state>${n.states.map(s => `<option ${s === n.state ? 'selected' : ''}>${s}</option>`).join('')}</select> ${pill(n.state_set_by)}</div>
+      <div class="k">Importance</div><div class="v"><select data-imp>${[1,2,3,4,5].map(i => `<option ${i === n.importance ? 'selected' : ''}>${i}</option>`).join('')}</select> ${pill(n.importance_set_by)}</div>
+      <div class="k">Came from</div><div class="v">${esc(ORIGIN_WORDS[n.origin] || n.origin)}${n.source ? ' (' + esc(n.source) + ')' : ''}</div>
+      <div class="k">How sure</div><div class="v">${c.origin ? esc(ORIGIN_WORDS[c.origin] || c.origin) + ' · ' + esc(CONF_WORDS[c.confidence] || c.confidence)
+          + (c.model ? ' · ' + esc(c.model) : '') : 'Not sorted yet'}</div>
+      <div class="k">Category</div><div class="v">${esc(n.category || '—')}</div>
+      <div class="k">Created</div><div class="v">${esc(fmtWhen(n.created))}</div>
+      <div class="k">Last changed</div><div class="v">${esc(fmtWhen(n.updated))}</div>
+      <div class="k">Last used</div><div class="v">${esc(fmtWhen(n.last_referenced))}</div>
+      <div class="k">Replaces</div><div class="v">${list(n.supersedes)}</div>
+      <div class="k">Replaced by</div><div class="v">${n.superseded_by ? esc(T[n.superseded_by] || n.superseded_by) : '—'}</div>
+      <div class="k">Related decisions</div><div class="v">${list(n.related_decisions)}</div>
+      <div class="k">Related tasks</div><div class="v">${list(n.related_tasks)}</div>
+      <div class="k">Tags</div><div class="v">${esc(n.tags.join(', ') || '—')}</div>
+    </div>
+    <div class="acts">${(n.activity || []).map(a => `<div>${esc(fmtWhen(a.at))} · ${esc(a.event)}${a.origin && a.origin !== 'user' ? ' <span class="pill ai">' + esc(ORIGIN_WORDS[a.origin] || a.origin) + '</span>' : ''}</div>`).join('') || 'No history yet.'}</div>
+    <div class="row"><button data-replaces title="Then right-click the older note this one replaces">Replaces an older note…</button>
+      ${n.type_set_by === 'you' ? '<button data-cleartype>Use Jarvis\'s type</button>' : ''}<button data-close>Close</button><button class="primary" data-save>Save</button></div>`;
+  starDialog.style.display = 'block';
+  starDialog.querySelector('[data-close]').onclick = closeDialog;
+  const ct = starDialog.querySelector('[data-cleartype]');
+  if (ct) ct.onclick = async () => { closeDialog(); await nodeSet({ id: n.id, clear: 'type' }); };
+  starDialog.querySelector('[data-replaces]').onclick = () => {
+    closeDialog(); replaceFrom = { path: node.path, label: node.label };
+    banner(`Right-click the older note that '${node.label}' replaces · Esc to cancel`);
+  };
+  starDialog.querySelector('[data-save]').onclick = async () => {
+    const body = { id: n.id };
+    const t = starDialog.querySelector('[data-type]').value, st = starDialog.querySelector('[data-state]').value,
+          im = +starDialog.querySelector('[data-imp]').value;
+    if (t !== n.type && n.type !== 'category') body.type = t;
+    if (st !== n.state && (body.type === undefined)) body.state = st;
+    if (im !== n.importance) body.importance = im;
+    closeDialog();
+    if (Object.keys(body).length > 1) await nodeSet(body);
+  };
+}
+async function showActivity() {
+  let r = null;
+  try { r = await (await fetch('/activity?limit=200')).json(); } catch (e) {}
+  const rows = (r && r.activity) || [];
+  starDialog.innerHTML = `<h3>Activity history</h3><p>Everything Jarvis and you have changed, newest first. Amber is Jarvis acting on its own reading; nothing is ever removed from this list.</p>
+    <div class="acts" style="max-height:50vh">${rows.map(a => `<div>${esc(fmtWhen(a.at))} · <b>${esc(a.event)}</b>${a.note ? ' · ' + esc(a.note) : ''}${a.origin && a.origin !== 'user'
+      ? ' <span class="pill ai">' + esc(ORIGIN_WORDS[a.origin] || a.origin) + (a.confidence != null ? ' ' + esc(a.confidence) : '') + '</span>' : ''}</div>`).join('') || 'Nothing yet.'}</div>
+    <div class="row"><button class="primary" data-close>Close</button></div>`;
+  starDialog.style.display = 'block';
+  starDialog.querySelector('[data-close]').onclick = closeDialog;
+}
+
 async function onStarRightClick(node, ev) {
   if (!node || !node.path) return;
   lastThing = { kind: 'note', path: node.path };
   // Second star of "Link star": right-clicking it links the two, no menu.
+  if (replaceFrom && replaceFrom.path !== node.path) {       // 4.5.0: "this replaces an older note"
+    const newer = replaceFrom; replaceFrom = null; banner('');
+    await nodeSet({ path: newer.path, supersedes_path: node.path });
+    return;
+  }
   if (linkFrom && linkFrom.path !== node.path) {
     const from = linkFrom; linkFrom = null; banner('');
     await starOp({ op: 'link', path: from.path, other: node.path });
@@ -1221,6 +1318,7 @@ async function onStarRightClick(node, ev) {
     dialog({ title: 'Change star contents', note: 'The previous version is kept, and Undo puts it back.', value: r.text,
              multiline: true, onOk: v => starOp({ op: 'edit', path: node.path, text: v }) });
   });
+  item('Details…', () => showNodeDetails(node));
   item('Link star', () => { linkFrom = { path: node.path, label: node.label };
                             banner(`Right-click the star to link with '${node.label}' · Esc to cancel`); });
   hr();
@@ -3136,7 +3234,7 @@ function renderSettings() {
           .map(([v, l]) => `<option value="${v}" ${SETUP.app_browser === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p class="note">Jarvis ${SETUP.version || ''}. Your notes: the <code>notes</code> folder inside the Jarvis folder. Deleted and replaced notes are kept in <code>notes/.jarvis/bin</code> and <code>notes/.jarvis/versions</code>.</p>
     <p id="setup-msg"></p>
-    <div class="row"><button data-notes>Open my notes folder</button><button data-quit title="Stops Jarvis completely. Open it again from its icon.">Quit Jarvis</button><button data-uninstall title="Removes Jarvis from this computer. It asks first, and asks about your notes.">Uninstall…</button><button class="primary" data-close>Done</button></div>`;
+    <div class="row"><button data-notes>Open my notes folder</button><button data-activity title="Everything Jarvis and you have changed">Activity history</button><button data-quit title="Stops Jarvis completely. Open it again from its icon.">Quit Jarvis</button><button data-uninstall title="Removes Jarvis from this computer. It asks first, and asks about your notes.">Uninstall…</button><button class="primary" data-close>Done</button></div>`;
   setupEl.style.display = 'flex';
   document.getElementById('set-browser').onchange = async e => {
     const d = await (await fetch('/setup/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3150,6 +3248,7 @@ function renderSettings() {
                                                              : `<span class="msg-bad">Your notes are in: ${d.path}</span>`;
     } catch (e) {}
   };
+  setupCard.querySelector('[data-activity]').onclick = () => showActivity();   // 4.5.0
   setupCard.querySelector('[data-uninstall]').onclick = async () => {
     try {
       const d = await (await fetch('/system/uninstall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
@@ -3250,7 +3349,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') endTour(); }
 // ---- help: everything, with examples you can click ----
 const HELP = [
   ['Talk to it', 'Type, or press the mic and speak. Ask about your notes, or just chat.',
-    ["what's on my plate?", 'what am I putting off?', 'what did I decide about the van?', 'have I forgotten anything?', 'what patterns do you see?', "what's there to look forward to this month?"]],
+    ["what's on my plate?", 'what am I putting off?', 'what did I decide about the van?', 'have I forgotten anything?', 'what patterns do you see?', "what's there to look forward to this month?", 'what do I currently prefer?', 'what did I previously think about the van?']],
   ['Save things', 'Start with “remember that…” or “note to self”. Say “start capturing” to dump lots of thoughts at once (“stop capturing” to finish). The 📄 button reads a photo of a paper note.',
     ['remember that Mum\'s birthday is 3 May', 'start capturing']],
   ['Organise', 'New notes wait in the Inbox until sorted. Right-click a star for rename / change / link / category / delete. Every change can be undone.',

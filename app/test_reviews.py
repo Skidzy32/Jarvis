@@ -103,6 +103,7 @@ check("morning spoken: short, ends with the good-day question",
       m["spoken"] == "Good morning, sir. 1 due today, 2 coming up in the next few days, you're waiting on 1 thing. "
                      "What would make today a good day?")
 loops.update_loop(rec_for(N, paths[5])["id"], "done", notes_dir=N)
+_sc = rec_for(N, paths[5]); _sc["loop"]["closed_at"] = today.isoformat() + "T18:00:00+01:00"; records.save(_sc, N)   # done "today" in this test's calendar
 e = reviews.build("evening", N, today=today)
 et = {s["title"]: [i["text"] for i in s["items"]] for s in e["sections"]}
 check("evening: what happened (captures + done)", "Done: Pay the council tax today" in et["What happened today"])
