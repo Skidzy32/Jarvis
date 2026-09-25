@@ -390,7 +390,7 @@
     </div>
   </div>
 </div>
-<input id="paper-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" style="display:none" />
+<input id="paper-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif,.txt,.md,.csv,.json,.pdf,.docx,.xlsx" style="display:none" />
 <div id="share-indicator"><span class="dot"></span> Screen sharing — Jarvis can see this</div>
 
 <div id="panel">
@@ -409,7 +409,7 @@
     <button id="screen-btn" title="Share your screen">🖥️</button>
     <button id="focus-btn" title="Start/stop a focus session">⏱️</button>
     <button id="capture-btn" title="Capture mode: everything you say or type goes to your inbox">📥</button>
-    <button id="paper-btn" title="Add a photo of a paper note">📄</button>
+    <button id="paper-btn" title="Photo, screenshot or document (PDF, Word, Excel, text): Jarvis keeps the original and files it in your inbox">📄</button>
     <button id="eyes-btn" title="Eyes: webcam posture nudges (frames never leave your computer)">👁</button>
     <button id="send-btn">Send</button>
   </div>
@@ -910,6 +910,8 @@ const REMEMBER_PATTERNS = [
 // ---------- 2.4.0: capture mode, "save that", the inbox, paper ----------
 // Whole-message commands, checked after filler and end punctuation are
 // stripped. Keep in sync with CAPTURE_COMMANDS in test_capture.py.
+const CLIP_SAVE_RE = /^((remember|save|keep|capture|log)\s+(this|what'?s\s+on\s+my\s+clipboard|my\s+clipboard|the\s+clipboard)|(save|capture)\s+(from\s+)?(my\s+|the\s+)?clipboard)$/i;   // 5.0.0
+const CLIP_ASK_RE = /^(what\s+is\s+this|what'?s\s+this|what'?s\s+on\s+my\s+clipboard|explain\s+this)$/i;
 const CAPTURE_ON_RE = /^(start\s+capturing|capture\s+mode(\s+on)?|turn\s+on\s+capture(\s+mode)?|brain\s*dump(\s+mode)?|let\s+me\s+brain\s*dump)$/i;
 const CAPTURE_OFF_RE = /^((stop|end|exit|finish|done)\s+(capturing|capture(\s+mode)?)|capture\s+(mode\s+)?off|turn\s+off\s+capture(\s+mode)?)$/i;
 const SAVE_PREVIOUS_RE = /^((save|capture|keep|log|remember)\s+that(\s+one)?(\s+(to|in)\s+(my\s+)?inbox)?|that('?s|\s+was|\s+is)\s+a\s+note)$/i;
@@ -1978,7 +1980,8 @@ async function refreshInbox() {
   }
 }
 
-const SOURCE_WORDS = { typed: 'typed', spoken: 'spoken', paper: 'from paper', file: 'file',
+const SOURCE_WORDS = { typed: 'typed', spoken: 'spoken', paper: 'from paper', file: 'imported file',
+                       clipboard: 'from your clipboard', browser: 'from a web page', email: 'from an email', calendar: 'from your calendar',
                        'person-note': 'person note', jarvis: 'Jarvis follow-up', unknown: '' };
 
 // 2.5.0: where things can go. Same names as sorting.py's HOME_WORDS.
@@ -1997,7 +2000,7 @@ function itemBlock(item, extraMeta) {
   const div = el('div', 'item');
   const when = (item.created || '').replace('T', ' ').slice(0, 16);
   div.append(el('div', 't', item.title), el('div', 'p', item.preview));
-  div.append(el('div', 'm', [when, SOURCE_WORDS[item.source] || item.source, item.photo ? 'photo kept' : '',
+  div.append(el('div', 'm', [when, SOURCE_WORDS[item.source] || item.source, item.photo ? 'photo kept' : '', item.file ? item.file + ' kept' : '',
                              ...(extraMeta || [])].filter(Boolean).join(' · ')));
   return div;
 }
@@ -2208,8 +2211,24 @@ function closePaperReview() {
   paperState.originalB64 = paperState.extracted = paperState.model = null;
 }
 
+// 5.0.0: documents (TXT/MD/CSV/PDF/DOCX/XLSX) are kept as they are, and one
+// note in the inbox stands for each; pictures go on to the photo reader below.
+const DOC_RE = /\.(txt|md|markdown|csv|json|log|pdf|docx|xlsx)$/i;
+async function handleSourceFile(file) {
+  if (file.size > 25 * 1024 * 1024) { const l = "That file is over 25 MB, sir."; addMsg(l, 'error'); speak(l); return; }
+  setStatus('Reading the file…');
+  try {
+    const dataURL = await fileToDataURL(file);
+    const d = await (await fetch('/capture/file', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, data_base64: dataURL.split(',')[1] || '' }) })).json();
+    setStatus('');
+    addMsg(d.spoken, d.ok ? 'assistant' : 'error'); speak(d.spoken);
+    if (d.ok && d.graph) { applyGraph(d.graph); updateEmptyHint(); refreshInbox(); }
+  } catch (e) { setStatus(''); addMsg(`Couldn't send that file: ${e.message}.`, 'error'); }
+}
 async function handlePaperFile(file) {
   if (!file) return;
+  if (DOC_RE.test(file.name || '') && !/^image\//.test(file.type)) { await handleSourceFile(file); return; }
   if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
     const line = "That isn't a JPG, PNG, WebP or GIF picture, sir. An iPhone HEIC photo needs saving as JPG first.";
     addMsg(line, 'error'); speak(line);
@@ -2254,6 +2273,11 @@ async function handlePaperFile(file) {
 }
 
 document.getElementById('paper-btn').addEventListener('click', () => document.getElementById('paper-file').click());
+// 5.0.0: paste a screenshot or picture into the message box -> the photo reader
+chatInput.addEventListener('paste', e => {
+  const f = [...((e.clipboardData && e.clipboardData.files) || [])].find(x => /^image\//.test(x.type));
+  if (f) { e.preventDefault(); handlePaperFile(f); }
+});
 document.getElementById('paper-file').addEventListener('change', e => {
   const f = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -2821,6 +2845,28 @@ async function sendMessage() {
   if (EYES_ON_RE.test(cmd)) { chatInput.value = ''; addMsg(text, 'user'); startEyes(); return; }
   if (EYES_OFF_RE.test(cmd)) { chatInput.value = ''; addMsg(text, 'user'); stopEyes(true); return; }
   if (LOOK_RE.test(cmd)) { chatInput.value = ''; addMsg(text, 'user'); await lookAtMe(text); return; }
+  // 5.0.0: "remember this" / "what is this?" -> whatever is on your clipboard
+  if (CLIP_SAVE_RE.test(cmd) || (CLIP_ASK_RE.test(cmd) && !isScreenShareLive())) {
+    chatInput.value = '';
+    if (CLIP_SAVE_RE.test(cmd)) addMsg(text, 'user');
+    let clip = '';
+    try { clip = (await navigator.clipboard.readText() || '').trim(); } catch (e) {}
+    if (!clip) {
+      if (!CLIP_SAVE_RE.test(cmd)) addMsg(text, 'user');
+      const l = "Your clipboard is empty, or the browser won't let me read it, sir. Copy the text, then say it again, or just paste it here.";
+      addMsg(l, 'assistant'); speak(l); return;
+    }
+    if (CLIP_SAVE_RE.test(cmd)) {
+      const d = await (await fetch('/remember', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: clip, source: 'clipboard', mode: 'paste' }) })).json();
+      const l = d.ok ? "From your clipboard, into the inbox, sir. Word for word." : (d.error || "That didn't save, sir.");
+      addMsg(l, d.ok ? 'assistant' : 'error'); speak(l);
+      if (d.ok && d.graph) { applyGraph(d.graph); updateEmptyHint(); refreshInbox(); }
+      return;
+    }
+    chatInput.value = `What is this? Here it is:\n"""\n${clip.slice(0, 6000)}\n"""`;
+    return sendMessage();                      // asked as an ordinary question, with the clipboard in it
+  }
   if (CAPTURE_ON_RE.test(cmd)) { chatInput.value = ''; setCaptureMode(true, 'said'); return; }
   if (SAVE_PREVIOUS_RE.test(cmd)) {
     chatInput.value = '';
@@ -3233,6 +3279,19 @@ function renderSettings() {
         ${[['auto', 'Automatic'], ['chrome', 'Chrome'], ['edge', 'Edge'], ['brave', 'Brave'], ['opera', 'Opera GX'], ['default', 'My normal browser (a tab)']]
           .map(([v, l]) => `<option value="${v}" ${SETUP.app_browser === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p class="note">Jarvis ${SETUP.version || ''}. Your notes: the <code>notes</code> folder inside the Jarvis folder. Deleted and replaced notes are kept in <code>notes/.jarvis/bin</code> and <code>notes/.jarvis/versions</code>.</p>
+    <p class="note" id="models-line">AI models: checking…</p>
+    <details id="premium-box" style="margin:6px 0 4px"><summary style="cursor:pointer;color:#aab0cc">Stronger AI (optional, just for you)</summary>
+      <div style="padding:8px 0 0 4px;font-size:12px;color:#aab0cc">
+        <label class="opt" style="cursor:default"><span style="flex:1">Use:</span>
+          <select id="prem-mode" style="background:#0a0d18;color:#e8e8f0;border:1px solid #3a4468;border-radius:6px;padding:5px">
+            <option value="off">Off (free models only)</option>
+            <option value="claude_code">Claude Code on this PC (your Claude plan)</option>
+            <option value="anthropic_api">Anthropic API key (pay per use)</option>
+            <option value="openrouter">A paid model on OpenRouter (your credit)</option></select></label>
+        <div id="prem-extra"></div>
+        <p class="note" id="prem-status"></p>
+        <div class="row" style="justify-content:flex-start"><button id="prem-save">Save</button></div>
+      </div></details>
     <p id="setup-msg"></p>
     <div class="row"><button data-notes>Open my notes folder</button><button data-activity title="Everything Jarvis and you have changed">Activity history</button><button data-quit title="Stops Jarvis completely. Open it again from its icon.">Quit Jarvis</button><button data-uninstall title="Removes Jarvis from this computer. It asks first, and asks about your notes.">Uninstall…</button><button class="primary" data-close>Done</button></div>`;
   setupEl.style.display = 'flex';
@@ -3249,6 +3308,60 @@ function renderSettings() {
     } catch (e) {}
   };
   setupCard.querySelector('[data-activity]').onclick = () => showActivity();   // 4.5.0
+  (() => {                                                                      // 4.9.0: the optional stronger AI
+    const P = SETUP.premium || { mode: 'off', use_for: ['reasoning', 'rescue'], daily_cap: 20 };
+    const mode = document.getElementById('prem-mode'), extra = document.getElementById('prem-extra'),
+          st = document.getElementById('prem-status');
+    if (!mode) return;
+    mode.value = P.mode || 'off';
+    const inp = 'background:#0a0d18;color:#e8e8f0;border:1px solid #3a4468;border-radius:6px;padding:5px';
+    const draw = () => {
+      const m = mode.value;
+      extra.innerHTML = m === 'off' ? '' : `
+        ${m === 'anthropic_api' ? `<label class="opt" style="cursor:default"><span style="flex:1">Anthropic key${P.has_anthropic_key ? ' (saved; leave blank to keep)' : ''}:</span>
+            <input id="prem-key" type="password" autocomplete="off" placeholder="sk-ant-…" style="${inp};width:190px"></label>` : ''}
+        <label class="opt" style="cursor:default"><span style="flex:1">Model${m === 'openrouter' ? ' (e.g. from openrouter.ai/models)' : ' (blank = default)'}:</span>
+          <input id="prem-model" value="${esc(P.mode === m ? P.model || '' : '')}" placeholder="${m === 'anthropic_api' ? 'claude-sonnet-5' : m === 'openrouter' ? 'provider/model' : ''}" style="${inp};width:190px"></label>
+        <label class="opt"><input type="checkbox" id="prem-reason" ${P.use_for.includes('reasoning') ? 'checked' : ''}> For harder questions (compare, decide, plan, why)</label>
+        <label class="opt"><input type="checkbox" id="prem-rescue" ${P.use_for.includes('rescue') ? 'checked' : ''}> When every free model fails</label>
+        <label class="opt" style="cursor:default"><span style="flex:1">At most this many a day:</span><input id="prem-cap" type="number" min="0" max="500" value="${P.daily_cap}" style="${inp};width:70px"></label>`;
+      st.textContent = m === 'claude_code' ? (P.claude_code_found ? 'Claude Code found on this PC. It uses your Claude plan\'s limits; check this use fits Anthropic\'s terms for your plan.'
+                                                              : 'Claude Code isn\'t installed on this PC yet (install it from Anthropic, sign in once, then come back).')
+                     : m === 'anthropic_api' ? 'Your Claude Pro plan doesn\'t include the API: this is billed separately by Anthropic, per use.'
+                     : m === 'openrouter' ? 'Uses your OpenRouter key and credit.' : 'Jarvis uses the free models only.';
+      if (m !== 'off') st.textContent += ` Used today: ${P.used_today || 0}.`;
+    };
+    mode.onchange = draw; draw();
+    document.getElementById('prem-save').onclick = async () => {
+      const m = mode.value, g = id => document.getElementById(id);
+      const body = { premium: { mode: m } };
+      if (m !== 'off') {
+        body.premium.model = g('prem-model').value.trim();
+        body.premium.daily_cap = +g('prem-cap').value || 0;
+        body.premium.use_for = [g('prem-reason').checked && 'reasoning', g('prem-rescue').checked && 'rescue'].filter(Boolean);
+        if (g('prem-key') && g('prem-key').value.trim()) body.anthropic_api_key = g('prem-key').value.trim();
+      }
+      const d = await (await fetch('/setup/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+      if (d.ok) { SETUP = d; Object.assign(P, d.premium); draw(); st.textContent = 'Saved. ' + st.textContent; }
+      else st.textContent = d.message || 'Not saved.';
+    };
+  })();
+  (async () => {                                                               // 4.8.0: the model pool
+    const line = document.getElementById('models-line'); if (!line) return;
+    try {
+      const m = await (await fetch('/models')).json();
+      const benched = m.models.filter(x => x.benched.length).length;
+      line.innerHTML = m.count
+        ? `AI models: Jarvis chooses from <b>${m.count}</b> free models, keeping one per conversation and checking its answers`
+          + (benched ? ` (${benched} resting after failures)` : '') + `. List updated ${esc(fmtWhen(m.fetched))}. <a href="#" data-mref>Refresh</a>`
+        : `AI models: using OpenRouter's free router until the model list arrives. <a href="#" data-mref>Get the list now</a>`;
+      line.querySelector('[data-mref]').onclick = async e => {
+        e.preventDefault(); line.textContent = 'AI models: fetching the list…';
+        const d = await (await fetch('/models/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+        line.textContent = 'AI models: ' + d.spoken;
+      };
+    } catch (e) { line.textContent = ''; }
+  })();
   setupCard.querySelector('[data-uninstall]').onclick = async () => {
     try {
       const d = await (await fetch('/system/uninstall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
@@ -3349,9 +3462,9 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') endTour(); }
 // ---- help: everything, with examples you can click ----
 const HELP = [
   ['Talk to it', 'Type, or press the mic and speak. Ask about your notes, or just chat.',
-    ["what's on my plate?", 'what am I putting off?', 'what did I decide about the van?', 'have I forgotten anything?', 'what patterns do you see?', "what's there to look forward to this month?", 'what do I currently prefer?', 'what did I previously think about the van?']],
+    ["what's on my plate?", 'what am I putting off?', 'what did I decide about the van?', 'have I forgotten anything?', 'what patterns do you see?', "what's there to look forward to this month?", 'what do I currently prefer?', 'what did I previously think about the van?', 'start a new conversation']],
   ['Save things', 'Start with “remember that…” or “note to self”. Say “start capturing” to dump lots of thoughts at once (“stop capturing” to finish). The 📄 button reads a photo of a paper note.',
-    ['remember that Mum\'s birthday is 3 May', 'start capturing']],
+    ['remember that Mum\'s birthday is 3 May', 'start capturing', 'remember this', 'what is this?', 'where did you get that?']],
   ['Organise', 'New notes wait in the Inbox until sorted. Right-click a star for rename / change / link / category / delete. Every change can be undone.',
     ['sort my inbox', 'link that with the budget note', 'file the mic note and the camera note as Gear', 'rename the category Gear to Kit', 'unlink the van note and the budget note']],
   ['Plans and reviews', 'Jarvis keeps a list of what you\'ve said you\'ll do (Loops), and offers a short morning, evening and Sunday review.',

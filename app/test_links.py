@@ -92,6 +92,7 @@ def fake(api_key, model, messages):
     return seq.pop(0)
 server._call_openrouter_once = fake
 server.runtime_override_model = None
+server.NOTES_DIR = tempfile.mkdtemp(prefix="jarvis-links-brain-")   # 4.8.0: model stats go here, never into your notes
 cfg = {"openrouter_api_key": "k", "model_chain": ["openrouter/free", "openrouter/free", "openrouter/free"]}
 seq[:] = [("The user is safe.", "some/model:free"), ("unsafe\nS2", "x/y:free"), ("Hello, sir.", "good/model:free")]
 ans, used, _ = server.call_brain(cfg, [])

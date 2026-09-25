@@ -42,6 +42,7 @@ UNSORTED_BELOW = 0.5    # confidence under this -> UNSORTED
 
 SORT_HOMES = ("NOW", "PROJECTS", "AREAS", "KNOWLEDGE", "JOURNAL", "SOMEDAY", "ARCHIVE", "WONDER")
 AREAS = ("Work", "Health & Fitness", "Home", "Relationships", "Finance", "Personal")
+SEND_CHARS = 4000       # 5.0.0: most of any one note that goes to a model when sorting
 KINDS = ("task", "project", "commitment", "waiting_for", "decision", "decision_to_confirm",
          "problem", "risk", "idea", "knowledge", "reflection", "experience", "goal",
          "future_possibility", "wonder", "purchase", "reminder", "person_context", "work_context")
@@ -280,8 +281,13 @@ def sort_inbox(call_brain, config, notes_dir=None, today=None, max_batches=MAX_B
                 summary["not_read"].append(sc["path"])
                 continue
             words_by_n[n] = (sc, words)
+            # 5.0.0: only what's needed goes out -- a long imported file is sent as its
+            # opening part, and passwords/keys/card numbers are hidden (brief 3 §24).
+            import brain
+            sent, _hidden = brain.redact(words if len(words) <= SEND_CHARS else
+                                         words[:SEND_CHARS] + " […the rest of this note isn't shown]")
             payload.append({"n": n, "captured": _captured_date(sc), "source": sc.get("source"),
-                            "text": words})
+                            "text": sent})
         if not payload:
             continue
         messages = [

@@ -59,7 +59,9 @@ def items(notes_dir=None):
             "created_from": sc.get("created_from"),
             "source": sc.get("source"),
             "path": sc["path"],
-            "photo": sc.get("source_file"),
+            "photo": sc.get("source_file") if sc.get("source") == "paper" else None,
+            "file": (sc.get("capture") or {}).get("filename"),          # 5.0.0: an imported file
+            "state": "RAW",                                              # 5.0.0: brief 3 §5 name
         })
     out.sort(key=lambda i: i["created"] or "", reverse=True)
     return out

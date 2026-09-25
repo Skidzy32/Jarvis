@@ -41,6 +41,11 @@ import stars
 import knowledge      # 4.5.0: what Jarvis knows about each note (type, source, time)
 import activity       # 4.5.0: one audit trail
 import retrieval      # 4.6.0: finding the right notes (layered, local)
+import brain          # 4.7.0: personality, session state, task packets (model-independent)
+import models         # 4.8.0: the model pool: profiles, choice, learning, benching
+import validate       # 4.8.0: is this answer actually any good?
+import premium        # 4.9.0: the optional stronger AI (off unless switched on)
+import capture        # 5.0.0: one way in for everything (files, clipboard, sources)
 import setup_flow
 import organise
 import usage_tracker
@@ -294,61 +299,7 @@ def prettify_model_label(slug):
 # the butler for a terse mission-control operator, a sarcastic friend,
 # whatever — nothing else in the file needs to change.
 # ============================================================================
-SYSTEM_PROMPT = (
-    "You are a dry, impeccably polite British butler with a razor wit, "
-    "serving as the user's personal assistant. You answer ONLY from the "
-    "notes provided below.\n\n"
-    "Voice and manner:\n"
-    "- Address the user as \"sir\" occasionally — not in every sentence. "
-    "Overusing it is the difference between charming and grating.\n"
-    "- Answer in one witty sentence plus the facts. Never recite a note "
-    "back word for word; it is already on the user's screen.\n"
-    "- One genuinely funny line beats three bland ones. If nothing funny "
-    "presents itself, be brief instead of forcing a joke.\n"
-    "- When the notes do not cover the question, say so plainly and with a "
-    "little dignity. Never invent a source, never pad, never pretend a "
-    "loosely related note is the answer.\n"
-    "- Handle small talk and pleasantries briefly and in character, without "
-    "treating them as real questions about the notes.\n"
-    "- A note marked NOT current (superseded, reversed, historical) is what "
-    "used to be true. Never present it as how things are now; say it was "
-    "the case before. A note marked unconfirmed is Jarvis's own reading, not "
-    "something the user said.\n\n"
-    "Judgment, not just agreement:\n"
-    "- You are not a yes-man. If the user's stated plan has a real flaw, or "
-    "a better alternative plainly exists, say so once, plainly and "
-    "respectfully, before or alongside answering — then move on. Do not "
-    "labour the point or repeat it once said.\n"
-    "- If a single message bundles several genuinely distinct requests "
-    "(not just a naturally compound sentence), you may gently suggest "
-    "taking them one at a time — use your own judgment for what counts as "
-    "'genuinely distinct'; do not nitpick ordinary phrasing.\n\n"
-    "Focus sessions (only when the user asks how to use them):\n"
-    "- To change what a running focus session is locked on, the user goes "
-    "to that tab or app and says \"lock on this tab\" (or presses LOCK THIS "
-    "TAB on the desktop countdown card). Never tell them to abort and "
-    "restart the session just to move the target: the FOCUS button lives in "
-    "the Jarvis tab, so restarting is the slow way round and loses the "
-    "session's progress. Saying \"lock on this tab\" from the Jarvis tab "
-    "itself tells you to wait and lock onto wherever they go next.\n"
-    "- Privacy, if asked: during a focus session you name the app or site "
-    "the user drifted into out loud, in the moment (\"Sir, Instagram can "
-    "wait\"), and the focus session never writes it down: it is not kept "
-    "in the session, the report card, the focus ledger, or your notes. "
-    "SEPARATELY, at the user's own request, a usage tracker records how "
-    "long each app and site (its name only -- never page addresses or "
-    "titles) is in front while Jarvis runs, on this computer only: daily "
-    "totals kept about a week, then weekly, monthly and yearly reports that "
-    "are kept. Anything on their never-record list (usage/settings.json) "
-    "is counted with no name, and the same file switches tracking off. Say "
-    "both parts plainly if asked; never claim nothing is recorded.\n\n"
-    "- Reflections and feelings: when the user's notes or question are about "
-    "how they feel or what their day was like, drop the wit entirely. Be calm, "
-    "brief and non-judgemental; reflect what they wrote without turning it into "
-    "advice, a to-do list or a pep talk, unless they ask for that. Never treat a "
-    "passing mood as a permanent fact about them.\n\n"
-    "Keep the whole answer to two or three sentences."
-)
+SYSTEM_PROMPT = brain.PERSONALITY     # 4.7.0: the one canonical personality now lives in brain.py
 # ============================================================================
 
 # Same butler, now looking at a live frame of the user's screen instead of
@@ -514,8 +465,117 @@ def unusable_reply(answer, model_used):
             or bool(SAFETY_VERDICT_RE.match(text[:120])))
 
 
-def call_brain(config, messages):
+MAX_ROUTER_TRIES = FREE_CHAIN_MIN_TRIES     # 4.8.0: models tried for one request (4, as before)
+
+
+def _has_image(messages):
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "image_url" for x in c):
+            return True
+    return False
+
+
+def _pinned_chain(config):
+    """A model_chain you set yourself (anything but the default free router)."""
+    chain = config.get("model_chain") or DEFAULT_MODEL_CHAIN
+    return any(m != models.FALLBACK for m in chain)
+
+
+def call_brain(config, messages, capability=None, prefer=None, check=None):
+    """4.8.0 (addendum R2): Jarvis picks the model itself.
+    capability: FAST/GENERAL/REASONING/VISION/TOOL (worked out if not given).
+    prefer: the model already answering this conversation (kept while it
+    passes). check(answer) -> (ok, kind, reason): validation beyond the
+    safety-verdict test. Returns (answer, model_used, switch_note) like
+    before, so every caller keeps working. A brain you swapped in, or a
+    model_chain you pinned in config.json, still goes exactly where you said."""
+    if runtime_override_model is not None or _pinned_chain(config):
+        return _call_brain_chain(config, messages)
+    cap = capability or ("VISION" if _has_image(messages) else "GENERAL")
+    api_key = config.get("openrouter_api_key", "")
+    tried, errors, soft = set(), [], None
+    order = models.candidates(cap, prefer, NOTES_DIR, extra=premium.profile(config, cap, NOTES_DIR))
+    rescue = premium.rescue_id(config, NOTES_DIR)
+    attempts = 0
+    while attempts < MAX_ROUTER_TRIES or (rescue and rescue not in tried and not soft):
+        # openrouter/free may be asked more than once: it picks a different model itself
+        if attempts >= MAX_ROUTER_TRIES:
+            pick = rescue                     # 4.9.0: every free model failed -> your stronger AI, once
+        else:
+            pick = next((m for m in order if m not in tried or m == models.FALLBACK), None)
+        if pick is None:
+            break
+        tried.add(pick)
+        attempts += 1
+        t0 = time.time()
+        is_prem = premium.is_premium(pick, config)
+        try:
+            if is_prem and premium.settings(config)["mode"] != "openrouter":
+                answer, model_used = premium.call(config, messages)
+            else:
+                answer, model_used = _call_openrouter_once(api_key, pick, messages)
+            if is_prem:
+                premium.count_use(NOTES_DIR)
+        except RuntimeError as e:                     # the stronger AI couldn't answer
+            models.record(pick, cap, False, NOTES_DIR, reason="error")
+            errors.append(f"{pick}: {e}")
+            continue
+        except urllib.error.HTTPError as e:
+            reason = "gone" if e.code == 404 else "rate_limited" if e.code == 429 else f"http_{e.code}"
+            if pick != models.FALLBACK:
+                models.record(pick, cap, False, NOTES_DIR, reason=reason)
+            errors.append(f"{pick}: HTTP {e.code}")
+            continue
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            errors.append(f"{pick}: {getattr(e, 'reason', e)}")
+            continue
+        ms = int((time.time() - t0) * 1000)
+        who = model_used or pick
+        if unusable_reply(answer, who):
+            models.record(who, cap, False, NOTES_DIR, reason="safety_verdict")
+            errors.append(f"{who}: gave a safety verdict, not an answer")
+            continue
+        ok, kind, why = check(answer) if check else (True, None, None)
+        if not ok:
+            models.record(who, cap, False, NOTES_DIR, reason=kind, latency_ms=ms)
+            errors.append(f"{who}: {why}")
+            print(f"[brain] {who} failed a check ({kind}: {why}); asking another model")
+            if kind in validate.HARD:
+                continue
+            if soft is None:
+                soft = (answer, who)
+                continue
+            return soft[0], soft[1], None                 # two soft misses: use the first, don't loop
+        models.record(who, cap, True, NOTES_DIR, latency_ms=ms)
+        return answer, who, None
+    if soft:
+        return soft[0], soft[1], None
+    raise RuntimeError(
+        "Every model I tried failed -- " + "; ".join(errors[-6:])
+        + ". If they all failed the same way, check that your key in config.json is correct.")
+
+
+def ask_brain(config, messages, **kw):
+    """call_brain with 4.8.0's extras, if the brain in use takes them (a
+    stand-in brain in a test may only take config and messages)."""
+    import inspect
+    try:
+        params = inspect.signature(call_brain).parameters
+    except (TypeError, ValueError):
+        params = {}
+    return call_brain(config, messages, **{k: v for k, v in kw.items() if k in params})
+
+
+def tool_brain(config, messages):
+    """For JSON plans and sorting: models good at structured output (4.8.0)."""
+    return ask_brain(config, messages, capability="TOOL", check=validate.check_json)
+
+
+def _call_brain_chain(config, messages):
     """
+    (Before 4.8.0 this was call_brain; it's now used for a brain you swapped
+    in and for a model_chain you pinned yourself in config.json.)
     Calls OpenRouter. If a brain has been explicitly swapped in at runtime
     (via /model), that ONE model is called directly — no fallback chain,
     because a deliberate choice shouldn't be silently overridden by a
@@ -629,7 +689,7 @@ REMIND_HONESTY = (" It's in your inbox, sir, though I can't yet remind you at a 
 # 2.4.0: how a capture arrived. "phrase" = a trigger phrase above;
 # "capture-mode" = everything said/typed while capture mode is on;
 # "save-previous" = "save that", keeping the message before it.
-CAPTURE_MODES = ("phrase", "capture-mode", "save-previous")
+CAPTURE_MODES = ("phrase", "capture-mode", "save-previous", "paste")      # 5.0.0: + paste (clipboard, browser, apps: kept whole)
 
 LEADING_FILLERS = {
     "um", "umm", "uh", "er", "yeah", "yep", "ok", "okay", "so", "well",
@@ -655,6 +715,8 @@ def capture_content_for_mode(raw_text, mode):
     """2.4.0: capture mode and "save that" keep your words as they are
     (only surrounding spaces trimmed) -- no trailing full stop or quote
     removed -- unless the message itself starts with a trigger phrase."""
+    if mode == "paste":
+        return raw_text.strip()                 # 5.0.0: pasted/sent content is kept exactly, whatever it starts with
     if mode in ("capture-mode", "save-previous"):
         cleaned = strip_leading_filler(raw_text.strip())
         if not any(p.match(cleaned) for p in REMEMBER_PATTERNS):
@@ -1076,6 +1138,15 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/diag":
             self._send_json(200, diag_report())
             return
+        if route == "/models":
+            # 4.8.0: the model pool -- what's known, what each is good for, what's benched
+            self._send_json(200, dict(ok=True, **models.summary(NOTES_DIR)))
+            return
+        if route == "/session":
+            # 4.7.0: what Jarvis is keeping about this conversation (model-independent)
+            self._send_json(200, {"ok": True, "session": brain.current(NOTES_DIR),
+                                  "summary": brain.state_summary(brain.current(NOTES_DIR))})
+            return
         if route in ("/node", "/nodes", "/activity"):
             # 4.5.0: what Jarvis knows about a note (/node?path= or ?id=), all
             # notes (/nodes), and the audit trail (/activity?limit=&id=).
@@ -1286,6 +1357,29 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/stars":
             self._handle_stars()
             return
+        if route == "/capture/file":
+            # 5.0.0: a document you drop or pick: kept as it is, one note stands for it
+            body = self._read_json_body() or {}
+            try:
+                data = base64.b64decode(body.get("data_base64") or "", validate=True)
+                sc, note_path, info = capture.save_file(body.get("filename") or "file", data, NOTES_DIR)
+                rebuild_graph()
+                q = {"full": "", "partial": " I pulled out what text I could; check the original for tables and pictures.",
+                     "none": " I couldn't read any text in it (a scanned PDF?), but the original is kept."}[info["quality"]]
+                self._send_json(200, {"ok": True, "record_id": sc["id"], "path": note_path, "graph": load_graph(),
+                                      "spoken": f"Filed in your inbox, sir: {info['filename']}.{q}"})
+            except (ValueError, OSError, RuntimeError) as e:
+                self._send_json(200, {"ok": False, "spoken": f"I couldn't take that file, sir: {e}."})
+            return
+        if route == "/models/refresh":
+            n, msg = models.refresh(NOTES_DIR, force=True, blocked=BLOCKED_MODELS)
+            self._send_json(200, {"ok": True, "count": n, "spoken": f"{n} free models known, sir ({msg})."})
+            return
+        if route == "/session/new":
+            conversation_history.clear()
+            self._send_json(200, {"ok": True, "session": brain.reset(NOTES_DIR),
+                                  "spoken": "A fresh page, sir. What shall we talk about?"})
+            return
         if route == "/node/set":
             # 4.5.0: you set a note's type / state / importance, or say it
             # replaces an older note. Undoable; recorded in the activity trail.
@@ -1343,6 +1437,26 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json_body() or {}
             q = body.get("question", "")
             a = None
+            if re.fullmatch(r"(jarvis[, ]+)?(let'?s )?(start (a )?new conversation|new conversation|start over|fresh start|new topic)[.!]?",
+                            q.strip().lower()):
+                conversation_history.clear()
+                brain.reset(NOTES_DIR)
+                self._send_json(200, {"intent": "new_conversation", "spoken": "A fresh page, sir. What shall we talk about?"})
+                return
+            if re.fullmatch(r"(jarvis[, ]+)?(where did (you|that|this|it) (get|come from)( that| this| it)?( from)?|"
+                            r"what'?s (the|your) source( for that| of that)?|where'?s (that|this) from|how do you know that)\??",
+                            q.strip().lower()):
+                # 5.0.0: provenance of what was just used
+                sess = brain.current(NOTES_DIR)
+                recs, _ = records.load_all(NOTES_DIR)
+                by_title = {knowledge._title(sc, NOTES_DIR): sc for sc in recs.values() if not sc.get("missing")}
+                used = [by_title[n["title"]] for n in (sess.get("notes") or [])[:3] if n.get("title") in by_title]
+                spoken = ("From your notes, sir. " + " ".join(capture.source_of(sc, NOTES_DIR) for sc in used)) if used \
+                    else ("Nothing to trace yet, sir: I haven't answered anything in this conversation." if not sess.get("turns")
+                          else "I didn't draw on any of your notes for that, sir; it was the AI's general knowledge, not anything you've told me.")
+                self._send_json(200, {"intent": "provenance", "spoken": spoken,
+                                      "items": [{"title": knowledge._title(sc, NOTES_DIR), "record_id": sc["id"]} for sc in used]})
+                return
             try:
                 p = retrieval.answer_preferences(q, NOTES_DIR)       # 4.6.0: now vs before
                 if p:
@@ -1420,18 +1534,36 @@ class Handler(BaseHTTPRequestHandler):
             pass
         notes_block = retrieval.notes_block(top_notes)
 
-        messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\nNOTES:\n{notes_block}"}]
-        messages.extend(conversation_history[-MAX_HISTORY_TURNS * 2:])
-        messages.append({"role": "user", "content": question})
+        # 4.7.0 (addendum R1): Jarvis keeps the conversation's state itself and
+        # hands the model a focused brief, so a different model can carry on.
+        with brain._LOCK:
+            session = brain.current(NOTES_DIR)
+            if not session.get("turns"):
+                conversation_history.clear()          # a new conversation starts clean
+            session = brain.before_turn(session, question, top_notes)
+            messages, _hidden = brain.build_packet(question, session, notes_block, conversation_history,
+                                                   personality=SYSTEM_PROMPT, max_history_turns=MAX_HISTORY_TURNS)
 
+        # 4.8.0: pick a model for what this needs, keep the one already in the
+        # conversation while it passes, and check the answer before using it.
+        cap = models.capability_for(question)
+        if validate.is_correction(question) and session.get("current_model"):
+            models.record(session["current_model"], session.get("last_cap") or "GENERAL", False, NOTES_DIR,
+                          reason="user_correction", weight=0.5)          # a weak signal, not proof
+        titles = [n.get("label", "") for n in graph["nodes"]]
+        check = lambda a: validate.check_chat(a, question, top_notes, titles)
         try:
-            answer, model_used, switch_note = call_brain(config, messages)
+            answer, model_used, switch_note = ask_brain(config, messages, capability=cap,
+                                                        prefer=session.get("current_model"), check=check)
         except RuntimeError as e:
             self._send_json(200, {"answer": "", "nodes": [], "error": str(e)})
             return
 
         conversation_history.append({"role": "user", "content": question})
         conversation_history.append({"role": "assistant", "content": answer})
+        with brain._LOCK:
+            session["last_cap"] = cap
+            brain.after_turn(session, answer, model_used, switch_note, NOTES_DIR)
 
         self._send_json(200, {
             "answer": answer,
@@ -1470,6 +1602,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": False, "error": f"Could not save that note: {e}"})
             return
 
+        # 5.0.0: where it came from, beyond typed/spoken (clipboard, a web page, an app)
+        if new_node.get("record_id") and (source in capture.SOURCES and source not in ("typed", "spoken", "unknown")
+                                          or any(body.get(k) for k in ("url", "title", "external_id", "app"))):
+            try:
+                sc = records.load_all(NOTES_DIR)[0].get(new_node["record_id"])
+                capture.record_meta(sc, source, {k: body.get(k) for k in ("url", "title", "external_id", "app")}, NOTES_DIR)
+            except (OSError, ValueError, KeyError) as e:
+                print(f"[capture] couldn't add capture details: {e!r}")
         self._send_json(200, {
             "ok": True,
             "node": new_node,
@@ -1535,6 +1675,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": False, "error": f"Could not create that note: {e}"})
             return
 
+        # 5.0.0: where it came from, beyond typed/spoken (clipboard, a web page, an app)
+        if new_node.get("record_id") and (source in capture.SOURCES and source not in ("typed", "spoken", "unknown")
+                                          or any(body.get(k) for k in ("url", "title", "external_id", "app"))):
+            try:
+                sc = records.load_all(NOTES_DIR)[0].get(new_node["record_id"])
+                capture.record_meta(sc, source, {k: body.get(k) for k in ("url", "title", "external_id", "app")}, NOTES_DIR)
+            except (OSError, ValueError, KeyError) as e:
+                print(f"[capture] couldn't add capture details: {e!r}")
         self._send_json(200, {
             "ok": True,
             "node": new_node,
@@ -1573,7 +1721,7 @@ class Handler(BaseHTTPRequestHandler):
                 "in it meanwhile.")})
             return
         ids = body.get("record_ids") if isinstance(body.get("record_ids"), list) else None
-        summary = sorting.sort_inbox(call_brain, config, notes_dir=NOTES_DIR, only_ids=ids,
+        summary = sorting.sort_inbox(tool_brain, config, notes_dir=NOTES_DIR, only_ids=ids,
                                      link=body.get("link", True) is not False)
         try:
             rebuild_graph()
@@ -1668,7 +1816,7 @@ class Handler(BaseHTTPRequestHandler):
             if not local_ok and brain_ok and actions.ACTION_HINT_RE.search(text):
                 # The parser couldn't place it (or hit a snag): let the AI read it,
                 # with the conversation, and check what it proposes.
-                planned = actions.handle(text, history, call_brain, config, NOTES_DIR, remember_fn, focus_id)
+                planned = actions.handle(text, history, tool_brain, config, NOTES_DIR, remember_fn, focus_id)
                 if planned.get("ok") or planned.get("question") or not out.get("handled"):
                     if planned.get("chat"):
                         planned = {"handled": False}
@@ -1699,7 +1847,8 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = setup_flow.test_key(body.get("key"))
                 self._send_json(200, {"ok": ok, "message": msg})
             elif route == "/setup/save":
-                changes = {k: body[k] for k in ("openrouter_api_key", "address", "user_name", "app_browser") if k in body}
+                changes = {k: body[k] for k in ("openrouter_api_key", "address", "user_name", "app_browser", "premium",
+                                                 "anthropic_api_key", "clear_anthropic_key") if k in body}
                 setup_flow.save(CONFIG_PATH, changes)
                 self._send_json(200, {"ok": True, **setup_flow.state(CONFIG_PATH, PLACEHOLDER_KEY, NOTES_DIR)})
             elif route == "/setup/samples":
@@ -1776,7 +1925,7 @@ class Handler(BaseHTTPRequestHandler):
             return sc["id"], sc["path"]
 
         history = body.get("history") if isinstance(body.get("history"), list) else []
-        out = actions.handle(str(body.get("request", ""))[:1000], history, call_brain, config, NOTES_DIR, remember_fn)
+        out = actions.handle(str(body.get("request", ""))[:1000], history, tool_brain, config, NOTES_DIR, remember_fn)
         if out.get("ok"):
             try:
                 rebuild_graph()
@@ -2456,10 +2605,16 @@ def start_upkeep(interval=600):
         while True:
             try:
                 settings, _p = reviews.load_settings()
-                maintenance.auto_tick(datetime.datetime.now(), call_brain, load_config, PLACEHOLDER_KEY,
+                maintenance.auto_tick(datetime.datetime.now(), tool_brain, load_config, PLACEHOLDER_KEY,
                                       notes_dir=NOTES_DIR, settings=settings)
             except Exception as e:  # noqa: BLE001 -- never stops the server
                 print(f"[upkeep] {e}", flush=True)
+            try:        # 4.8.0: the free-model list, at most once a day
+                n, msg = models.refresh(NOTES_DIR, blocked=BLOCKED_MODELS)
+                if msg != "up to date":
+                    print(f"[models] {n} free models: {msg}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[models] {e}", flush=True)
             threading.Event().wait(interval)
     threading.Thread(target=loop, name="upkeep", daemon=True).start()
 

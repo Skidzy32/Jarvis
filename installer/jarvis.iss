@@ -26,7 +26,7 @@
 ; your PC" the first time: More info -> Run anyway.
 ; ============================================================
 
-#define AppVersion "4.6.0"
+#define AppVersion "5.0.0"
 #define PyVersion "3.13.15"
 #define PySetup "python-" + PyVersion + "-amd64.exe"
 

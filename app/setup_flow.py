@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-VERSION = "4.6.0"
+VERSION = "5.0.0"
 ADDRESS_MODES = ("sir", "madam", "name", "none")
 APP_BROWSERS = ("auto", "chrome", "edge", "brave", "opera", "default")   # 4.3.0: what the Jarvis icon opens
 SAMPLES_SOURCE = os.path.join(ROOT, "examples")
@@ -57,7 +57,8 @@ def state(config_path, placeholder, notes_dir):
             "platform": "windows" if sys.platform == "win32" else "mac" if sys.platform == "darwin" else "other",
             "samples": os.path.isdir(os.path.join(notes_dir, "samples")),
             "app_browser": c.get("app_browser") if c.get("app_browser") in APP_BROWSERS else "auto",
-            "version": VERSION}
+            "version": VERSION,
+            "premium": __import__("premium").status(c)}        # 4.9.0 (never includes the key)
 
 
 def test_key(key, timeout=20):
@@ -98,6 +99,17 @@ def save(config_path, changes):
         if changes["app_browser"] not in APP_BROWSERS:
             raise ValueError("unknown browser")
         c["app_browser"] = changes["app_browser"]
+    if "premium" in changes:            # 4.9.0: the optional stronger AI
+        import premium
+        c["premium"] = dict(c.get("premium") or {}, **premium.validate_changes(changes["premium"] or {}))
+    if "anthropic_api_key" in changes:
+        k = str(changes["anthropic_api_key"] or "").strip()
+        if k and not k.startswith("sk-ant-"):
+            raise ValueError("Anthropic keys start with sk-ant-")
+        if k:
+            c["anthropic_api_key"] = k
+        elif changes.get("clear_anthropic_key"):
+            c.pop("anthropic_api_key", None)
     if "user_name" in changes:
         c["user_name"] = re.sub(r"\s+", " ", str(changes["user_name"] or "")).strip()[:40]
     if c.get("address") == "name" and not c.get("user_name"):
